@@ -67,7 +67,6 @@ def osft_pipeline(
     # =========================================================================
     # OPTIONAL PARAMETERS - Sorted by step
     # =========================================================================
-    phase_01_dataset_opt_hf_token: str = "",
     phase_01_dataset_opt_subset: int = 0,
     phase_02_train_opt_learning_rate: float = 5e-6,
     phase_02_train_opt_max_seq_len: int = 8192,
@@ -96,14 +95,12 @@ def osft_pipeline(
         phase_04_registry_man_address: Model Registry address (empty = skip registration)
         phase_04_registry_man_reg_version: Semantic version (major.minor.patch)
         phase_04_registry_man_reg_name: Model name in registry
-        phase_01_dataset_opt_hf_token: HuggingFace token for gated/private datasets
         phase_01_dataset_opt_subset: Limit to first N examples (0 = all)
         phase_02_train_opt_learning_rate: Learning rate (1e-6 to 1e-4). 5e-6 recommended
         phase_02_train_opt_max_seq_len: Max sequence length in tokens
         phase_02_train_opt_use_liger: [OSFT] Enable Liger kernel optimizations. Recommended
         phase_04_registry_opt_format_version: Model format version
     """
-
     # =========================================================================
     # Stage 1: Dataset Download
     # =========================================================================
@@ -112,7 +109,6 @@ def osft_pipeline(
         pvc_mount_path=dsl.WORKSPACE_PATH_PLACEHOLDER,
         train_split_ratio=phase_01_dataset_man_data_split,
         subset_count=phase_01_dataset_opt_subset,
-        hf_token=phase_01_dataset_opt_hf_token,
         shared_log_file="pipeline_log.txt",
     )
     dataset_download_task.set_caching_options(False)
@@ -120,7 +116,7 @@ def osft_pipeline(
 
     kfp.kubernetes.use_secret_as_env(
         dataset_download_task,
-        secret_name="minio-secret",
+        secret_name="s3-secret",
         secret_key_to_env={
             "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY",
@@ -157,8 +153,6 @@ def osft_pipeline(
         # Not used by OSFT - pass empty/zero
         training_save_samples=0,
         training_accelerate_full_state_at_epoch=False,
-        # Environment
-        training_hf_token=phase_01_dataset_opt_hf_token,
         # Resources
         training_resource_cpu_per_worker="8",
         training_resource_gpu_per_worker=phase_02_train_man_train_gpu,
@@ -176,6 +170,13 @@ def osft_pipeline(
             "server_url": "KUBERNETES_SERVER_URL",
             "auth_token": "KUBERNETES_AUTH_TOKEN",
         },
+    )
+
+    kfp.kubernetes.use_secret_as_env(
+        task=training_task,
+        secret_name="oci-pull-secret-model-download",
+        secret_key_to_env={"OCI_PULL_SECRET_MODEL_DOWNLOAD": "OCI_PULL_SECRET_MODEL_DOWNLOAD"},
+        optional=True,
     )
 
     # =========================================================================
@@ -198,13 +199,6 @@ def osft_pipeline(
     kfp.kubernetes.add_node_selector(eval_task, "nvidia.com/gpu.present", "true")
     eval_task.set_accelerator_type("nvidia.com/gpu")
     eval_task.set_accelerator_limit(1)
-
-    kfp.kubernetes.use_secret_as_env(
-        task=eval_task,
-        secret_name="hf-token",
-        secret_key_to_env={"HF_TOKEN": "HF_TOKEN"},
-        optional=True,
-    )
 
     # =========================================================================
     # Stage 4: Model Registry
@@ -231,6 +225,20 @@ def osft_pipeline(
     )
     model_registry_task.set_caching_options(False)
     kfp.kubernetes.set_image_pull_policy(model_registry_task, "IfNotPresent")
+
+
+    # =========================================================================
+    # Common Tasks
+    # =========================================================================
+
+    # Attach shared Hugging Face token secret to all main tasks
+    for _task in [dataset_download_task, training_task, eval_task]:
+        kfp.kubernetes.use_secret_as_env(
+            task=_task,
+            secret_name="hf-token",
+            secret_key_to_env={"HF_TOKEN": "HF_TOKEN"},
+            optional=True,
+        )
 
 
 if __name__ == "__main__":

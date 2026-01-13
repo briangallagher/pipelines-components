@@ -168,7 +168,7 @@ def sft_pipeline(
 
     kfp.kubernetes.use_secret_as_env(
         dataset_download_task,
-        secret_name="minio-secret",
+        secret_name="s3-secret",
         secret_key_to_env={
             "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY",
@@ -210,8 +210,6 @@ def sft_pipeline(
         training_accelerate_full_state_at_epoch=phase_02_train_opt_save_full_state,
         training_fsdp_sharding_strategy=phase_02_train_opt_fsdp_sharding,
         # Environment
-        training_hf_token=phase_02_train_opt_hf_token,
-        training_pull_secret=phase_02_train_opt_pull_secret,
         training_envs=phase_02_train_opt_env_vars,
         training_metadata_labels=phase_02_train_opt_labels,
         training_metadata_annotations=phase_02_train_opt_annotations,
@@ -232,6 +230,13 @@ def sft_pipeline(
             "server_url": "KUBERNETES_SERVER_URL",
             "auth_token": "KUBERNETES_AUTH_TOKEN",
         },
+    )
+
+    kfp.kubernetes.use_secret_as_env(
+        task=training_task,
+        secret_name="oci-pull-secret-model-download",
+        secret_key_to_env={"OCI_PULL_SECRET_MODEL_DOWNLOAD": "OCI_PULL_SECRET_MODEL_DOWNLOAD"},
+        optional=True,
     )
 
     # =========================================================================

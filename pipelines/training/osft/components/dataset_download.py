@@ -24,7 +24,6 @@ def dataset_download(
     pvc_mount_path: str,
     train_split_ratio: float = 0.9,
     subset_count: int = 0,
-    hf_token: str = "",
     shared_log_file: str = "pipeline_log.txt",
 ):
     """Download and prepare datasets from multiple sources.
@@ -51,7 +50,6 @@ def dataset_download(
         train_split_ratio: Ratio for train split (e.g., 0.9 for 90/10, 0.8 for 80/20)
         subset_count: Number of examples to use (0 = use all). Useful for testing with
             smaller datasets (e.g., 100 for quick tests, 1000 for validation runs)
-        hf_token: HuggingFace token for gated/private datasets
         shared_log_file: Name of the shared log file
     """
     import os
@@ -93,6 +91,18 @@ def dataset_download(
         else:
             # Default to HuggingFace if no scheme
             return ("hf", uri)
+
+    def split_hf_id_and_config(dataset_path: str) -> tuple[str, str | None]:
+        """Split an HF dataset identifier into (id, config) if a config suffix is provided.
+
+        Example:
+            "LipengCS/Table-GPT:All" -> ("LipengCS/Table-GPT", "All")
+            "bigcode/the-stack-dedup-python" -> ("bigcode/the-stack-dedup-python", None)
+        """
+        if ":" in dataset_path:
+            base, cfg = dataset_path.split(":", 1)
+            return base, cfg or None
+        return dataset_path, None
 
     def validate_chat_format_dataset(dataset: Dataset) -> bool:
         """Validate that dataset follows chat template format.
@@ -143,7 +153,14 @@ def dataset_download(
 
     def download_from_huggingface(dataset_path: str) -> Dataset:
         """Download dataset from HuggingFace."""
-        log_message(f"Downloading from HuggingFace: {dataset_path}")
+        ds_id, ds_config = split_hf_id_and_config(dataset_path)
+        if ds_config:
+            log_message(f"Downloading from HuggingFace: {ds_id} (config: {ds_config})")
+        else:
+            log_message(f"Downloading from HuggingFace: {ds_id}")
+
+        # Read HuggingFace token from environment (set via Kubernetes secret in the pipeline)
+        hf_token = os.environ.get("HF_TOKEN", "")
 
         # Set up authentication if token provided
         if hf_token:
@@ -151,9 +168,11 @@ def dataset_download(
 
         # Try to load with "train" split first
         load_kwargs = {
-            "path": dataset_path,
+            "path": ds_id,
             "split": "train",
         }
+        if ds_config:
+            load_kwargs["name"] = ds_config
 
         if hf_token:
             load_kwargs["token"] = hf_token
@@ -170,7 +189,9 @@ def dataset_download(
 
                 # Load dataset info without specifying split
                 try:
-                    load_kwargs_no_split = {"path": dataset_path}
+                    load_kwargs_no_split = {"path": ds_id}
+                    if ds_config:
+                        load_kwargs_no_split["name"] = ds_config
                     if hf_token:
                         load_kwargs_no_split["token"] = hf_token
 

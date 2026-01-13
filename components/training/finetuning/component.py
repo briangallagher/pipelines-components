@@ -51,10 +51,6 @@ def train_model(
     training_checkpoint_at_epoch: Optional[bool] = None,
     training_num_epochs: Optional[int] = None,
     training_data_output_dir: Optional[str] = None,
-    # HuggingFace token for gated models (optional - leave empty if not needed)
-    training_hf_token: str = "",
-    # Pull secret for registry.redhat.io in Docker config.json format (optional)
-    training_pull_secret: str = "",
     # Env overrides: "KEY=VAL,KEY=VAL"
     training_envs: str = "",
     # Resource and runtime parameters (per worker/pod)
@@ -106,8 +102,6 @@ def train_model(
         training_checkpoint_at_epoch: Save checkpoint at each epoch.
         training_num_epochs: Number of training epochs.
         training_data_output_dir: Directory for processed training data.
-        training_hf_token: HuggingFace token for gated models.
-        training_pull_secret: Pull secret for container registry.
         training_envs: Environment overrides as KEY=VAL,KEY=VAL.
         training_resource_cpu_per_worker: CPU cores per worker.
         training_resource_gpu_per_worker: GPUs per worker.
@@ -130,6 +124,10 @@ def train_model(
         training_accelerate_full_state_at_epoch: [SFT] Save full accelerate state.
         training_fsdp_sharding_strategy: [SFT] FSDP sharding strategy.
         kubernetes_config: KFP TaskConfig for volumes/env/resources passthrough.
+    
+    Environment:
+        HF_TOKEN: HuggingFace token for gated models (read from environment).
+        OCI_PULL_SECRET_MODEL_DOWNLOAD: Docker config.json content for pulling OCI model images.
     """
     import os, sys, json, time, logging, re, subprocess, shutil
     from typing import Dict, List, Tuple, Optional as _Optional
@@ -264,11 +262,13 @@ def train_model(
 
     merged_env = _configure_env(training_envs, default_env)
 
-    # Add HuggingFace token to environment if provided
-    if training_hf_token and training_hf_token.strip():
-        merged_env["HF_TOKEN"] = training_hf_token.strip()
-        os.environ["HF_TOKEN"] = training_hf_token.strip()
-        logger.info("HF_TOKEN added to environment (for gated model access)")
+    # Ensure HuggingFace token from environment is propagated into trainer env
+    # (e.g., set via Kubernetes secret at the pipeline level as HF_TOKEN)
+    hf_token_env = os.environ.get("HF_TOKEN", "").strip()
+    if hf_token_env:
+        merged_env["HF_TOKEN"] = hf_token_env
+        os.environ["HF_TOKEN"] = hf_token_env
+        logger.info("HF_TOKEN detected in environment; propagating to TrainingHub runtime")
 
     # ------------------------------
     # Dataset resolution
@@ -505,8 +505,8 @@ def train_model(
                 shutil.rmtree(model_out_dir)
         except Exception:
             pass
-        # Use provided pull secret (Docker config.json content) if present
-        auth_json = training_pull_secret.strip() or None
+        # Use pull secret (Docker config.json content) from environment if present
+        auth_json = os.environ.get("OCI_PULL_SECRET_MODEL_DOWNLOAD", "").strip() or None
         _skopeo_copy_to_dir(ref_no_scheme, dir_image, auth_json)
         extracted = _extract_models_from_dir_image(dir_image, model_out_dir)
         if not extracted:
