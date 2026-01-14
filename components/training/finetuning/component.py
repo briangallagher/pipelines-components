@@ -194,13 +194,25 @@ def train_model(
     # Kubernetes connection
     # ------------------------------
     def _init_k8s_client() -> _Optional["k8s_client.ApiClient"]:
-        """Initialize and return a Kubernetes client from env (server/token) or in-cluster/kubeconfig."""
+        """Initialize and return a Kubernetes client.
+
+        Preference order:
+        1) Explicit env vars (KUBERNETES_SERVER_URL / KUBERNETES_AUTH_TOKEN)
+        2) In-cluster config
+        3) Local kubeconfig
+        """
         try:
             from kubernetes import client as k8s_client, config as k8s_config
 
             env_server = os.environ.get("KUBERNETES_SERVER_URL", "").strip()
             env_token = os.environ.get("KUBERNETES_AUTH_TOKEN", "").strip()
-            if env_server and env_token:
+            if env_server or env_token:
+                # If either env var is set, require both to avoid silently falling back
+                if not env_server or not env_token:
+                    raise RuntimeError(
+                        "Kubernetes credentials misconfigured: both "
+                        "KUBERNETES_SERVER_URL and KUBERNETES_AUTH_TOKEN must be set and non-empty."
+                    )
                 logger.info("Configuring Kubernetes client from env (KUBERNETES_SERVER_URL/_AUTH_TOKEN)")
                 cfg = k8s_client.Configuration()
                 cfg.host = env_server
@@ -208,6 +220,11 @@ def train_model(
                 cfg.api_key = {"authorization": f"Bearer {env_token}"}
                 k8s_client.Configuration.set_default(cfg)
                 return k8s_client.ApiClient(cfg)
+
+            logger.warning(
+                "KUBERNETES_SERVER_URL and KUBERNETES_AUTH_TOKEN are not set; "
+                "falling back to in-cluster Kubernetes configuration or local kubeconfig."
+            )
             logger.info("Configuring Kubernetes client in-cluster (or local kubeconfig)")
             try:
                 k8s_config.load_incluster_config()
@@ -269,6 +286,27 @@ def train_model(
         merged_env["HF_TOKEN"] = hf_token_env
         os.environ["HF_TOKEN"] = hf_token_env
         logger.info("HF_TOKEN detected in environment; propagating to TrainingHub runtime")
+    else:
+        # If the base model looks like a Hugging Face Hub reference and no token is provided,
+        # warn that only public, non-gated models will be accessible.
+        if isinstance(training_base_model, str):
+            base_str = training_base_model.strip()
+            looks_like_hf_ref = (
+                base_str.startswith("hf://")
+                or (
+                    "/" in base_str
+                    and not base_str.startswith("oci://")
+                    and not os.path.exists(base_str)
+                )
+            )
+            if looks_like_hf_ref:
+                logger.warning(
+                    "HF_TOKEN is not set; attempting to load Hugging Face model "
+                    f"'{training_base_model}' without authentication. "
+                    "Only public, non-gated models can be downloaded. "
+                    "If you need access to gated models, configure the 'hf-token' "
+                    "Kubernetes secret."
+                )
 
     # ------------------------------
     # Dataset resolution
@@ -494,6 +532,37 @@ def train_model(
             logger.warning(f"Failed to render directory tree for {root}: {_e}")
 
     resolved_model_path: str = training_base_model
+
+    def _load_oci_auth_json() -> str | None:
+        """Validate and return OCI auth JSON from environment, if provided.
+
+        Expects OCI_PULL_SECRET_MODEL_DOWNLOAD to contain a Docker config.json-style
+        payload with an "auths" object. If the variable is set but invalid, raises
+        a ValueError with a clear message. If it is unset/empty, returns None and
+        skopeo will attempt anonymous access.
+        """
+        raw = os.environ.get("OCI_PULL_SECRET_MODEL_DOWNLOAD", "").strip()
+        if not raw:
+            logger.warning(
+                "OCI_PULL_SECRET_MODEL_DOWNLOAD is not set; attempting OCI model download without "
+                "credentials. If your registry requires authentication, create the "
+                "'oci-pull-secret-model-download' Kubernetes secret with Docker config.json content."
+            )
+            return None
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                "OCI_PULL_SECRET_MODEL_DOWNLOAD is set but is not valid JSON. "
+                "It must contain Docker config.json content for skopeo authentication."
+            ) from exc
+        if not isinstance(parsed, dict) or not parsed.get("auths"):
+            raise ValueError(
+                "OCI_PULL_SECRET_MODEL_DOWNLOAD is set but does not look like a Docker config.json. "
+                "Expected a JSON object with a non-empty 'auths' field."
+            )
+        return raw
+
     if isinstance(training_base_model, str) and training_base_model.startswith("oci://"):
         # Strip scheme and perform skopeo copy to a plain directory on PVC
         ref_no_scheme = training_base_model[len("oci://") :]
@@ -506,7 +575,7 @@ def train_model(
         except Exception:
             pass
         # Use pull secret (Docker config.json content) from environment if present
-        auth_json = os.environ.get("OCI_PULL_SECRET_MODEL_DOWNLOAD", "").strip() or None
+        auth_json = _load_oci_auth_json()
         _skopeo_copy_to_dir(ref_no_scheme, dir_image, auth_json)
         extracted = _extract_models_from_dir_image(dir_image, model_out_dir)
         if not extracted:

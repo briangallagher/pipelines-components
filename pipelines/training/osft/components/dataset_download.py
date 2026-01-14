@@ -53,6 +53,7 @@ def dataset_download(
         shared_log_file: Name of the shared log file
     """
     import os
+    import logging
     from datasets import Dataset, load_dataset
 
     def log_message(msg: str):
@@ -160,11 +161,16 @@ def dataset_download(
             log_message(f"Downloading from HuggingFace: {ds_id}")
 
         # Read HuggingFace token from environment (set via Kubernetes secret in the pipeline)
-        hf_token = os.environ.get("HF_TOKEN", "")
+        hf_token = (os.environ.get("HF_TOKEN") or "").strip()
 
         # Set up authentication if token provided
         if hf_token:
             log_message("Using provided HuggingFace token for authentication")
+        else:
+            logging.warning(
+                "No HF_TOKEN provided; only public, non-gated Hugging Face datasets can be downloaded. "
+                "If you need access to gated datasets, configure the 'hf-token' Kubernetes secret."
+            )
 
         # Try to load with "train" split first
         load_kwargs = {
@@ -235,8 +241,15 @@ def dataset_download(
         log_message(f"Loading from AWS S3: s3://{s3_path}")
 
         # Get credentials from Kubernetes secret (environment variables)
-        access_key = os.environ.get("AWS_ACCESS_KEY_ID")
-        secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
+        access_key = (os.environ.get("AWS_ACCESS_KEY_ID") or "").strip()
+        secret_key = (os.environ.get("AWS_SECRET_ACCESS_KEY") or "").strip()
+
+        # Validate that credentials are either both present or both absent
+        if (access_key and not secret_key) or (secret_key and not access_key):
+            raise ValueError(
+                "S3 credentials misconfigured: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must either "
+                "both be set and non-empty, or both be unset. Check the 's3-secret' Kubernetes secret."
+            )
 
         # Build storage_options for datasets library
         storage_options = {}

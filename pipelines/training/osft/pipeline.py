@@ -78,7 +78,7 @@ def osft_pipeline(
     A 4-stage ML pipeline for fine-tuning language models with OSFT:
     1) Dataset Download - Prepares training data from HuggingFace, S3, HTTP, or PVC
     2) OSFT Training - Fine-tunes using mini-trainer backend (orthogonal subspace)
-    3) Evaluation - Evaluates with lm-eval harness (MMLU, GSM8K, etc.)
+    3) Evaluation - Evaluates with lm-eval harness (MMLU, GSM8K)
     4) Model Registry - Registers trained model to Kubeflow Model Registry
 
     Args:
@@ -91,7 +91,7 @@ def osft_pipeline(
         phase_02_train_man_train_tokens: Max tokens per GPU (memory cap). 64000 for OSFT
         phase_02_train_man_train_unfreeze: [OSFT] Fraction to unfreeze (0.1=minimal, 0.25=balanced, 0.5=strong)
         phase_02_train_man_train_workers: Number of training pods. OSFT efficient single-node (1)
-        phase_03_eval_man_eval_tasks: lm-eval tasks (arc_easy, mmlu, gsm8k, hellaswag, etc.)
+        phase_03_eval_man_eval_tasks: lm-eval tasks (arc_easy, mmlu, gsm8k, hellaswag)
         phase_04_registry_man_address: Model Registry address (empty = skip registration)
         phase_04_registry_man_reg_version: Semantic version (major.minor.patch)
         phase_04_registry_man_reg_name: Model name in registry
@@ -167,9 +167,10 @@ def osft_pipeline(
         task=training_task,
         secret_name="kubernetes-credentials",
         secret_key_to_env={
-            "server_url": "KUBERNETES_SERVER_URL",
-            "auth_token": "KUBERNETES_AUTH_TOKEN",
+            "KUBERNETES_SERVER_URL": "KUBERNETES_SERVER_URL",
+            "KUBERNETES_AUTH_TOKEN": "KUBERNETES_AUTH_TOKEN",
         },
+        optional=False,
     )
 
     kfp.kubernetes.use_secret_as_env(
