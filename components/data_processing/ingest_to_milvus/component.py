@@ -33,6 +33,7 @@ def ingest_to_milvus(
     drop_existing: bool = True,
     embed_batch_size: int = 64,
     milvus_batch_size: int = 256,
+    pipeline_run_id: str = "",
 ) -> str:
     """Read chunks from S3, embed, and insert into Milvus.
 
@@ -117,27 +118,32 @@ def ingest_to_milvus(
             fields=[
                 FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=True),
                 FieldSchema(name="source_file", dtype=DataType.VARCHAR, max_length=512),
+                FieldSchema(name="source_document_id", dtype=DataType.VARCHAR, max_length=256),
+                FieldSchema(name="pipeline_run_id", dtype=DataType.VARCHAR, max_length=64),
                 FieldSchema(name="chunk_index", dtype=DataType.INT64),
                 FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=32768),
+                FieldSchema(name="lob", dtype=DataType.VARCHAR, max_length=128),
+                FieldSchema(name="doc_type", dtype=DataType.VARCHAR, max_length=128),
+                FieldSchema(name="effective_date", dtype=DataType.VARCHAR, max_length=32),
                 FieldSchema(
                     name="embedding",
                     dtype=DataType.FLOAT_VECTOR,
                     dim=embedding_dim,
                 ),
             ],
-            description="RAG document chunks with embeddings",
+            description="Scenario B: P&C document chunks with lineage metadata",
         )
         client.create_collection(collection_name=collection_name, schema=schema)
 
         index_params = client.prepare_index_params()
         index_params.add_index(
             field_name="embedding",
-            index_type="IVF_FLAT",
+            index_type="HNSW",
             metric_type="COSINE",
-            params={"nlist": 128},
+            params={"M": 16, "efConstruction": 256},
         )
         client.create_index(collection_name=collection_name, index_params=index_params)
-        print(f"Collection '{collection_name}' created (dim={embedding_dim}).")
+        print(f"Collection '{collection_name}' created (dim={embedding_dim}, HNSW index).")
 
     # --- Setup embedding ---
     use_endpoint = bool(embedding_endpoint)
@@ -178,8 +184,13 @@ def ingest_to_milvus(
         data = [
             {
                 "source_file": c["source_file"],
+                "source_document_id": c.get("source_document_id", c["source_file"]),
+                "pipeline_run_id": pipeline_run_id or "unknown",
                 "chunk_index": c["chunk_index"],
                 "text": c["text"],
+                "lob": c.get("lob", ""),
+                "doc_type": c.get("doc_type", ""),
+                "effective_date": c.get("effective_date", ""),
                 "embedding": emb,
             }
             for c, emb in zip(batch, embeddings)

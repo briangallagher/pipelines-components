@@ -250,12 +250,17 @@ def parse_and_chunk(
                         continue
 
                     lines = []
+                    doc_id = stem.lower().replace(" ", "-")
                     for idx, chunk in enumerate(chunks):
                         if chunk.text.strip():
                             lines.append(json.dumps({
                                 "source_file": fname,
+                                "source_document_id": doc_id,
                                 "chunk_index": idx,
                                 "text": chunk.text,
+                                "lob": os.environ.get("DOC_LOB", ""),
+                                "doc_type": os.environ.get("DOC_TYPE", ""),
+                                "effective_date": os.environ.get("DOC_EFFECTIVE_DATE", ""),
                             }))
                     if not lines:
                         log_verbose(f"[Worker {worker_pid}] {fname}: ALL CHUNKS EMPTY")

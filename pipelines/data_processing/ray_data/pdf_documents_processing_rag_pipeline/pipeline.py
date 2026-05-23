@@ -87,6 +87,11 @@ def rag_multistep_pipeline(
     drop_existing: bool = True,
     embed_batch_size: int = 64,
     milvus_batch_size: int = 256,
+    # Scenario B metadata
+    pipeline_run_id: str = "",
+    doc_lob: str = "",
+    doc_type: str = "",
+    doc_effective_date: str = "",
     # LLM deployment
     hf_secret_name: str = "hf-token-secret",
     llm_model_name: str = "mistralai/Mistral-7B-Instruct-v0.3",
@@ -238,6 +243,7 @@ def rag_multistep_pipeline(
             embedding_dim=embedding_dim,
             embed_batch_size=embed_batch_size,
             milvus_batch_size=milvus_batch_size,
+            pipeline_run_id=pipeline_run_id,
         )
         kubernetes.use_secret_as_env(
             ingest_with_service,
@@ -265,6 +271,7 @@ def rag_multistep_pipeline(
             embedding_dim=embedding_dim,
             embed_batch_size=embed_batch_size,
             milvus_batch_size=milvus_batch_size,
+            pipeline_run_id=pipeline_run_id,
         )
         kubernetes.use_secret_as_env(
             ingest_task,
