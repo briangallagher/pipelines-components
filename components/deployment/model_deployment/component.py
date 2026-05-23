@@ -63,13 +63,29 @@ def model_deployment(
     Returns:
         The inference endpoint URL.
     """
+    import os
     import time
 
     from kubernetes import client as kclient
     from kubernetes import config
 
-    config.load_incluster_config()
-    custom_api = kclient.CustomObjectsApi()
+    sa_token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    sa_ca_path = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+
+    if os.path.exists(sa_token_path):
+        conf = kclient.Configuration()
+        conf.host = "https://kubernetes.default.svc"
+        conf.ssl_ca_cert = sa_ca_path
+        with open(sa_token_path) as f:
+            token = f.read().strip()
+        conf.api_key = {"BearerToken": token}
+        conf.api_key_prefix = {"BearerToken": "Bearer"}
+        api_client = kclient.ApiClient(conf)
+    else:
+        config.load_incluster_config()
+        api_client = kclient.ApiClient()
+
+    custom_api = kclient.CustomObjectsApi(api_client)
 
     isvc_name = model_name.split("/")[-1].lower().replace(".", "-")
 
@@ -126,7 +142,7 @@ def model_deployment(
             "containers": [
                 {
                     "name": "kserve-container",
-                    "image": _VLLM_IMAGE,
+                    "image": "registry.redhat.io/rhaiis/vllm-cuda-rhel9@sha256:094db84a1da5e8a575d0c9eade114fa30f4a2061064a338e3e032f3578f8082a",
                     "command": ["python", "-m", "vllm.entrypoints.openai.api_server"],
                     "args": [
                         "--port=8080",

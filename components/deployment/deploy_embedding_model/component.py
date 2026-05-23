@@ -56,13 +56,29 @@ def deploy_embedding_model(
     Returns:
         The embedding service endpoint URL.
     """
+    import os
     import time
 
     from kubernetes import client as kclient
     from kubernetes import config
 
-    config.load_incluster_config()
-    custom_api = kclient.CustomObjectsApi()
+    sa_token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    sa_ca_path = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+
+    if os.path.exists(sa_token_path):
+        conf = kclient.Configuration()
+        conf.host = "https://kubernetes.default.svc"
+        conf.ssl_ca_cert = sa_ca_path
+        with open(sa_token_path) as f:
+            token = f.read().strip()
+        conf.api_key = {"BearerToken": token}
+        conf.api_key_prefix = {"BearerToken": "Bearer"}
+        api_client = kclient.ApiClient(conf)
+    else:
+        config.load_incluster_config()
+        api_client = kclient.ApiClient()
+
+    custom_api = kclient.CustomObjectsApi(api_client)
 
     # Derive InferenceService name from model name
     isvc_name = model_name.split("/")[-1].lower().replace("_", "-").replace(".", "-")

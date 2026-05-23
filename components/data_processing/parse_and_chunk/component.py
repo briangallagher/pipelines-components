@@ -757,10 +757,10 @@ def parse_and_chunk(
     else:
         print(f"RayJob '{rayjob_name}' waiting for Kueue admission...")
 
-    # Wait for Ray cluster to be fully ready before job execution
-    print(f"Waiting for Ray cluster to be ready with {num_workers} workers...")
-    max_wait = 600  # 10 minutes
+    # Wait for RayJob completion (checks both cluster readiness and job status)
+    max_wait = 4 * 3600
     start_time = time.time()
+    print(f"Waiting for RayJob '{rayjob_name}' to complete (timeout {max_wait}s)...")
     while True:
         rayjob_obj = custom_api.get_namespaced_custom_object(
             group=rayjob_group,
@@ -770,53 +770,31 @@ def parse_and_chunk(
             name=rayjob_name,
         )
         ray_status = rayjob_obj.get("status", {})
+        job_status = ray_status.get("jobStatus", "")
+        deployment_status = ray_status.get("jobDeploymentStatus", "")
         cluster_status = ray_status.get("rayClusterStatus", {})
-
-        ready_workers = str(cluster_status.get("readyWorkerReplicas", 0))
+        ready_workers = cluster_status.get("readyWorkerReplicas", 0)
         cluster_state = cluster_status.get("state", "creating")
 
-        if ready_workers == str(num_workers) and cluster_state == "ready":
-            print(f"Ray cluster ready: {ready_workers}/{num_workers} workers ready, state={cluster_state}")
+        if job_status == "SUCCEEDED":
+            print(f"RayJob completed successfully. Deployment: {deployment_status}")
             break
+        elif job_status == "FAILED":
+            raise RuntimeError(f"RayJob '{rayjob_name}' failed. Deployment: {deployment_status}")
 
         elapsed = time.time() - start_time
         if elapsed > max_wait:
             raise TimeoutError(
-                f"Ray cluster did not become ready within {max_wait}s. "
-                f"Ready workers: {ready_workers}/{num_workers}, state: {cluster_state}"
+                f"RayJob '{rayjob_name}' did not complete within {max_wait}s. "
+                f"Job: {job_status}, Deployment: {deployment_status}, "
+                f"Workers: {ready_workers}/{num_workers}, Cluster: {cluster_state}"
             )
 
         print(
-            f"  Waiting for cluster... ready workers: {ready_workers}/{num_workers}, "
-            f"state: {cluster_state} ({elapsed:.0f}s)"
+            f"  [{elapsed:.0f}s] Job: {job_status or 'pending'}, Deployment: {deployment_status}, "
+            f"Workers: {ready_workers}/{num_workers}, Cluster: {cluster_state}"
         )
-        time.sleep(10)
-
-    # Wait for job completion
-    max_job_wait = 4 * 3600
-    job_start = time.time()
-    print(f"Waiting for RayJob to complete (timeout {max_job_wait}s)...")
-    while True:
-        rayjob_obj = custom_api.get_namespaced_custom_object(
-            group=rayjob_group,
-            version=rayjob_version,
-            namespace=namespace,
-            plural=rayjob_plural,
-            name=rayjob_name,
-        )
-        job_status = rayjob_obj.get("status", {}).get("jobStatus", "")
-        if job_status == "SUCCEEDED":
-            print("RayJob completed successfully.")
-            break
-        elif job_status == "FAILED":
-            raise RuntimeError(f"RayJob '{rayjob_name}' failed.")
-
-        job_elapsed = time.time() - job_start
-        if job_elapsed > max_job_wait:
-            raise TimeoutError(
-                f"RayJob '{rayjob_name}' did not complete within {max_job_wait}s. Last status: {job_status}"
-            )
-        time.sleep(30)
+        time.sleep(15)
 
     return f"s3://{s3_bucket}/{s3_prefix}"
 
