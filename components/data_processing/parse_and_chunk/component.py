@@ -566,6 +566,30 @@ def parse_and_chunk(
                 run()
     ''')
 
+    from kubernetes import client as k8s_client
+    from kubernetes import config as k8s_config
+    import os
+
+    sa_token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    sa_ca_path = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+
+    if os.path.exists(sa_token_path):
+        conf = k8s_client.Configuration()
+        conf.host = "https://kubernetes.default.svc"
+        conf.ssl_ca_cert = sa_ca_path
+        with open(sa_token_path) as f:
+            token = f.read().strip()
+        conf.api_key = {"BearerToken": token}
+        conf.api_key_prefix = {"BearerToken": "Bearer"}
+        api_client = k8s_client.ApiClient(conf)
+        print("Configured K8s client from service account token")
+    else:
+        try:
+            k8s_config.load_incluster_config()
+        except k8s_config.ConfigException:
+            k8s_config.load_kube_config()
+        api_client = k8s_client.ApiClient()
+
     from codeflare_sdk import ManagedClusterConfig, RayJob
     from kubernetes.client import (
         V1PersistentVolumeClaimVolumeSource,
@@ -576,8 +600,6 @@ def parse_and_chunk(
 
     rayjob_name = f"docling-chunk-{int(time.time())}"
 
-    # Encode entrypoint script as base64 env var to avoid creating
-    # Secrets or ConfigMaps (service account lacks permissions for both).
     script_b64 = base64.b64encode(_DOCLING_CHUNK_PROCESS_PY.encode()).decode()
 
     shared_mount = V1VolumeMount(pvc_mount_path, name="shared-data", read_only=True)
@@ -643,21 +665,20 @@ def parse_and_chunk(
         ttl_seconds_after_finished=300,
     )
 
-    from kubernetes import client as k8s_client
-    from kubernetes import config as k8s_config
-
-    try:
-        k8s_config.load_incluster_config()
-    except k8s_config.ConfigException:
-        k8s_config.load_kube_config()
-
-    custom_api = k8s_client.CustomObjectsApi()
+    custom_api = k8s_client.CustomObjectsApi(api_client)
     rayjob_group = "ray.io"
     rayjob_version = "v1"
     rayjob_plural = "rayjobs"
 
-    job.submit()
-    print(f"RayJob '{rayjob_name}' submitted.")
+    rayjob_cr = job._build_rayjob_cr()
+    custom_api.create_namespaced_custom_object(
+        group=rayjob_group,
+        version=rayjob_version,
+        namespace=namespace,
+        plural=rayjob_plural,
+        body=rayjob_cr,
+    )
+    print(f"RayJob '{rayjob_name}' submitted via kubernetes API.")
 
     if bypass_kueue:
         rayjob_obj = custom_api.get_namespaced_custom_object(
