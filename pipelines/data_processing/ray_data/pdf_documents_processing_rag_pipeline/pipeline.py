@@ -202,6 +202,9 @@ def rag_multistep_pipeline(
         enable_profiling=enable_profiling,
         verbose=verbose,
         bypass_kueue=bypass_kueue,
+        doc_lob=doc_lob,
+        doc_type=doc_type,
+        doc_effective_date=doc_effective_date,
     )
     chunk_task.set_caching_options(False)
 

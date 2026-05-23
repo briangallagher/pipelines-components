@@ -42,6 +42,9 @@ def parse_and_chunk(
     enable_profiling: bool = False,
     verbose: bool = True,
     bypass_kueue: bool = False,
+    doc_lob: str = "",
+    doc_type: str = "",
+    doc_effective_date: str = "",
 ) -> str:
     """Parse PDFs and write chunked JSONL files to S3.
 
@@ -665,6 +668,9 @@ def parse_and_chunk(
                 "S3_PREFIX": s3_prefix,
                 "ENABLE_PROFILING": "true" if enable_profiling else "false",
                 "VERBOSE": "true" if verbose else "false",
+                "DOC_LOB": doc_lob,
+                "DOC_TYPE": doc_type,
+                "DOC_EFFECTIVE_DATE": doc_effective_date,
             },
         ),
         ttl_seconds_after_finished=300,
