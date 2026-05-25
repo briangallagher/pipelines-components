@@ -47,6 +47,7 @@ def parse_and_chunk(
     doc_category: str = "",
     doc_subcategory: str = "",
     doc_date: str = "",
+    pipeline_run_id: str = "",
 ) -> str:
     """Parse PDFs and write chunked JSONL files to S3.
 
@@ -939,11 +940,20 @@ def parse_and_chunk(
         tracker = _MLflowRESTTracker()
         tracker.create_experiment("data-strat-ingest")
         tracker.start_run(run_name=f"parse-{rayjob_name}")
+        tracker.log_param("pipeline_run_id", pipeline_run_id or "unknown")
         tracker.log_param("num_files", str(num_files))
         tracker.log_param("chunk_max_tokens", str(chunk_max_tokens))
-        tracker.log_param("tokenizer", tokenizer)
+        tracker.log_param("embedding_model", tokenizer)
         tracker.log_param("num_workers", str(num_workers))
+        tracker.log_param("worker_cpus", str(worker_cpus))
+        tracker.log_param("worker_memory_gb", str(worker_memory_gb))
+        tracker.log_param("s3_bucket", s3_bucket)
         tracker.log_param("s3_prefix", s3_prefix)
+        tracker.log_param("doc_category", doc_category)
+        tracker.log_param("doc_subcategory", doc_subcategory)
+        tracker.log_param("doc_date", doc_date)
+        tracker.log_param("ray_image", ray_image)
+        tracker.log_param("namespace", namespace)
         tracker.log_metric("duration_seconds", duration_seconds)
         tracker.end_run()
         print("MLflow: logged parse run to experiment 'data-strat-ingest'")

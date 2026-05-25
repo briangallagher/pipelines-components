@@ -100,6 +100,7 @@ def rag_ingest_pipeline(
         doc_category=doc_category,
         doc_subcategory=doc_subcategory,
         doc_date=doc_date,
+        pipeline_run_id=pipeline_run_id,
     )
     chunk_task.set_caching_options(False)
     kubernetes.use_config_map_as_env(

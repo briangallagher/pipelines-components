@@ -1,0 +1,1405 @@
+# PIPELINE DEFINITION
+# Name: rag-ingest-pipeline
+# Description: Data-chain-only RAG pipeline: parse & chunk PDFs with Docling (output to S3), then ingest into Milvus with local or remote embeddings. No model deployment steps.
+# Inputs:
+#    batch_size: int [Default: 4.0]
+#    bypass_kueue: bool [Default: False]
+#    chunk_max_tokens: int [Default: 256.0]
+#    collection_name: str [Default: 'rag_documents']
+#    cpus_per_actor: int [Default: 4.0]
+#    doc_category: str [Default: '']
+#    doc_date: str [Default: '']
+#    doc_subcategory: str [Default: '']
+#    drop_existing: bool [Default: True]
+#    embed_batch_size: int [Default: 64.0]
+#    embedding_dim: int [Default: 768.0]
+#    embedding_endpoint: str [Default: '']
+#    embedding_model: str [Default: 'ibm-granite/granite-embedding-125m-english']
+#    enable_profiling: bool [Default: False]
+#    head_cpus: int [Default: 2.0]
+#    head_memory_gb: int [Default: 8.0]
+#    index_type: str [Default: 'HNSW']
+#    input_path: str [Default: 'input/pdfs']
+#    max_actors: int [Default: 4.0]
+#    milvus_batch_size: int [Default: 256.0]
+#    milvus_db: str [Default: 'default']
+#    milvus_host: str [Default: 'milvus-milvus.milvus.svc.cluster.local']
+#    milvus_port: int [Default: 19530.0]
+#    milvus_token: str [Default: '']
+#    min_actors: int [Default: 2.0]
+#    namespace: str [Default: 'ray-docling']
+#    num_files: int [Default: 1000.0]
+#    num_workers: int [Default: 2.0]
+#    pipeline_run_id: str [Default: '']
+#    pvc_mount_path: str [Default: '/mnt/data']
+#    pvc_name: str [Default: 'data-pvc']
+#    ray_image: str [Default: 'quay.io/rhoai-szaher/docling-ray:latest']
+#    s3_bucket: str [Default: 'rag-chunks']
+#    s3_endpoint: str [Default: 'http://minio-service.default.svc.cluster.local:9000']
+#    s3_prefix: str [Default: 'chunks']
+#    s3_secret_name: str [Default: 'minio-secret']
+#    timeout_seconds: int [Default: 600.0]
+#    verbose: bool [Default: True]
+#    worker_cpus: int [Default: 8.0]
+#    worker_memory_gb: int [Default: 16.0]
+components:
+  comp-ingest-to-milvus:
+    executorLabel: exec-ingest-to-milvus
+    inputDefinitions:
+      parameters:
+        collection_name:
+          defaultValue: rag_documents
+          description: Milvus collection name.
+          isOptional: true
+          parameterType: STRING
+        drop_existing:
+          defaultValue: true
+          description: If True, drop and recreate the collection. If False, append
+            to it.
+          isOptional: true
+          parameterType: BOOLEAN
+        embed_batch_size:
+          defaultValue: 64.0
+          description: Batch size for embedding requests.
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        embedding_dim:
+          defaultValue: 768.0
+          description: Dimension of the embedding vectors.
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        embedding_endpoint:
+          defaultValue: ''
+          description: 'Optional embedding service URL. If empty,
+
+            uses a local sentence-transformers model.'
+          isOptional: true
+          parameterType: STRING
+        embedding_model:
+          defaultValue: ibm-granite/granite-embedding-125m-english
+          description: Embedding model name (for API or local).
+          isOptional: true
+          parameterType: STRING
+        index_type:
+          defaultValue: HNSW
+          isOptional: true
+          parameterType: STRING
+        milvus_batch_size:
+          defaultValue: 256.0
+          description: Batch size for Milvus inserts.
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        milvus_db:
+          defaultValue: default
+          description: Milvus database name.
+          isOptional: true
+          parameterType: STRING
+        milvus_host:
+          description: Milvus service hostname.
+          parameterType: STRING
+        milvus_port:
+          defaultValue: 19530.0
+          description: Milvus gRPC port.
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        milvus_token:
+          defaultValue: ''
+          description: Milvus authentication token. Empty string for unauthenticated
+            connections.
+          isOptional: true
+          parameterType: STRING
+        pipeline_run_id:
+          defaultValue: ''
+          isOptional: true
+          parameterType: STRING
+        s3_bucket:
+          description: S3 bucket containing chunk files.
+          parameterType: STRING
+        s3_endpoint:
+          description: S3-compatible endpoint URL (e.g. MinIO).
+          parameterType: STRING
+        s3_prefix:
+          defaultValue: chunks
+          description: Key prefix for chunk files in S3.
+          isOptional: true
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+  comp-parse-and-chunk:
+    executorLabel: exec-parse-and-chunk
+    inputDefinitions:
+      parameters:
+        batch_size:
+          defaultValue: 4.0
+          description: Files per batch sent to each actor.
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        bypass_kueue:
+          defaultValue: false
+          description: 'If True, remove the Kueue queue-name label and manually
+
+            unsuspend the RayJob, bypassing cluster quota management. Only use
+
+            on clusters without Kueue or with sufficient free resources.'
+          isOptional: true
+          parameterType: BOOLEAN
+        chunk_max_tokens:
+          defaultValue: 256.0
+          description: Max tokens per chunk (HybridChunker).
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        cpus_per_actor:
+          defaultValue: 4.0
+          description: CPUs per Docling processing actor.
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        doc_category:
+          defaultValue: ''
+          isOptional: true
+          parameterType: STRING
+        doc_date:
+          defaultValue: ''
+          isOptional: true
+          parameterType: STRING
+        doc_subcategory:
+          defaultValue: ''
+          isOptional: true
+          parameterType: STRING
+        enable_profiling:
+          defaultValue: false
+          description: Enable cProfile profiling (outputs profile stats).
+          isOptional: true
+          parameterType: BOOLEAN
+        head_cpus:
+          defaultValue: 2.0
+          description: CPUs for the Ray head pod.
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        head_memory_gb:
+          defaultValue: 8.0
+          description: Memory (GB) for the Ray head pod.
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        input_path:
+          description: Relative path to input PDFs under the PVC.
+          parameterType: STRING
+        max_actors:
+          defaultValue: 4.0
+          description: Maximum actor pool size.
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        min_actors:
+          defaultValue: 2.0
+          description: Minimum actor pool size.
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        namespace:
+          description: OpenShift namespace for the RayJob.
+          parameterType: STRING
+        num_files:
+          defaultValue: 0.0
+          description: Number of PDFs to process (0 = all).
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        num_workers:
+          defaultValue: 2.0
+          description: Number of Ray worker pods.
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        pvc_mount_path:
+          description: Mount path for the PVC inside pods.
+          parameterType: STRING
+        pvc_name:
+          description: Name of the PVC with input PDFs.
+          parameterType: STRING
+        ray_image:
+          description: Container image with Ray + Docling pre-installed.
+          parameterType: STRING
+        s3_bucket:
+          description: S3 bucket for output chunks.
+          parameterType: STRING
+        s3_endpoint:
+          description: S3-compatible endpoint URL (e.g. MinIO).
+          parameterType: STRING
+        s3_prefix:
+          defaultValue: chunks
+          description: Key prefix for chunk files in S3.
+          isOptional: true
+          parameterType: STRING
+        s3_secret_name:
+          defaultValue: minio-secret
+          description: 'Kubernetes Secret with S3 credentials (keys: access_key, secret_key).'
+          isOptional: true
+          parameterType: STRING
+        timeout_seconds:
+          defaultValue: 600.0
+          description: Per-file processing timeout.
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        tokenizer:
+          defaultValue: sentence-transformers/all-MiniLM-L6-v2
+          description: Tokenizer for HybridChunker (usually the embedding model name).
+          isOptional: true
+          parameterType: STRING
+        verbose:
+          defaultValue: true
+          description: Enable verbose logging for debugging.
+          isOptional: true
+          parameterType: BOOLEAN
+        worker_cpus:
+          defaultValue: 8.0
+          description: CPUs per worker pod.
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        worker_memory_gb:
+          defaultValue: 16.0
+          description: Memory (GB) per worker pod.
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+deploymentSpec:
+  executors:
+    exec-ingest-to-milvus:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - ingest_to_milvus
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'pymilvus>=2.4.0'\
+          \ 'sentence-transformers>=2.2.0' 'requests>=2.28.0' 'boto3>=1.28.0' 'rhoai-lineage\
+          \ @ git+https://github.com/briangallagher/rhoai-lineage.git'  &&  python3\
+          \ -m pip install --quiet --no-warn-script-location 'kfp==2.16.1' '--no-deps'\
+          \ 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"$0\" \"$@\"\
+          \n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef ingest_to_milvus(\n    s3_endpoint: str,\n    s3_bucket: str,\n\
+          \    milvus_host: str,\n    s3_prefix: str = \"chunks\",\n    embedding_endpoint:\
+          \ str = \"\",\n    embedding_model: str = \"ibm-granite/granite-embedding-125m-english\"\
+          ,\n    embedding_dim: int = 768,\n    milvus_port: int = 19530,\n    milvus_db:\
+          \ str = \"default\",\n    milvus_token: str = \"\",\n    collection_name:\
+          \ str = \"rag_documents\",\n    drop_existing: bool = True,\n    embed_batch_size:\
+          \ int = 64,\n    milvus_batch_size: int = 256,\n    pipeline_run_id: str\
+          \ = \"\",\n    index_type: str = \"HNSW\",\n) -> str:\n    \"\"\"Read chunks\
+          \ from S3, embed, and insert into Milvus.\n\n    Args:\n        s3_endpoint:\
+          \ S3-compatible endpoint URL (e.g. MinIO).\n        s3_bucket: S3 bucket\
+          \ containing chunk files.\n        milvus_host: Milvus service hostname.\n\
+          \        s3_prefix: Key prefix for chunk files in S3.\n        embedding_endpoint:\
+          \ Optional embedding service URL. If empty,\n            uses a local sentence-transformers\
+          \ model.\n        embedding_model: Embedding model name (for API or local).\n\
+          \        embedding_dim: Dimension of the embedding vectors.\n        milvus_port:\
+          \ Milvus gRPC port.\n        milvus_db: Milvus database name.\n        milvus_token:\
+          \ Milvus authentication token. Empty string for unauthenticated connections.\n\
+          \        collection_name: Milvus collection name.\n        drop_existing:\
+          \ If True, drop and recreate the collection. If False, append to it.\n \
+          \       embed_batch_size: Batch size for embedding requests.\n        milvus_batch_size:\
+          \ Batch size for Milvus inserts.\n\n    Returns:\n        The Milvus collection\
+          \ name and total vectors inserted.\n    \"\"\"\n    import json\n    import\
+          \ os\n    import time\n\n    import boto3\n    import requests as req_lib\n\
+          \    from pymilvus import CollectionSchema, DataType, FieldSchema, MilvusClient\n\
+          \n    # --- S3 client ---\n    s3 = boto3.client(\n        \"s3\",\n   \
+          \     endpoint_url=s3_endpoint,\n        aws_access_key_id=os.environ[\"\
+          S3_ACCESS_KEY\"],\n        aws_secret_access_key=os.environ[\"S3_SECRET_KEY\"\
+          ],\n        region_name=\"us-east-1\",\n    )\n\n    def stream_chunks_from_s3():\n\
+          \        \"\"\"Yield chunks one at a time from S3 JSONL files to avoid loading\
+          \ all into memory.\"\"\"\n        paginator = s3.get_paginator(\"list_objects_v2\"\
+          )\n        for page in paginator.paginate(Bucket=s3_bucket, Prefix=s3_prefix\
+          \ + \"/\"):\n            for obj in page.get(\"Contents\", []):\n      \
+          \          key = obj[\"Key\"]\n                if not key.endswith(\".jsonl\"\
+          ):\n                    continue\n                resp = s3.get_object(Bucket=s3_bucket,\
+          \ Key=key)\n                body = resp[\"Body\"].read().decode(\"utf-8\"\
+          )\n                for line in body.strip().split(\"\\n\"):\n          \
+          \          if line:\n                        yield json.loads(line)\n\n\
+          \    # --- Setup Milvus collection ---\n    uri = f\"http://{milvus_host}:{milvus_port}\"\
+          \n    milvus_kwargs = {\"uri\": uri, \"db_name\": milvus_db}\n    if milvus_token:\n\
+          \        milvus_kwargs[\"token\"] = milvus_token\n    client = MilvusClient(**milvus_kwargs)\n\
+          \n    collection_exists = client.has_collection(collection_name)\n\n   \
+          \ if collection_exists and not drop_existing:\n        desc = client.describe_collection(collection_name)\n\
+          \        for field in desc.get(\"fields\", []):\n            if field.get(\"\
+          name\") == \"embedding\":\n                existing_dim = field.get(\"params\"\
+          , {}).get(\"dim\")\n                if existing_dim is not None and int(existing_dim)\
+          \ != embedding_dim:\n                    raise ValueError(\n           \
+          \             f\"Existing collection '{collection_name}' has dim={existing_dim},\
+          \ \"\n                        f\"but embedding_dim={embedding_dim}. Drop\
+          \ the collection or fix the dimension.\"\n                    )\n      \
+          \          break\n        print(f\"Appending to existing collection '{collection_name}'.\"\
+          )\n    else:\n        if collection_exists:\n            print(f\"Dropping\
+          \ existing collection '{collection_name}'\")\n            client.drop_collection(collection_name)\n\
+          \n        schema = CollectionSchema(\n            fields=[\n           \
+          \     FieldSchema(name=\"id\", dtype=DataType.INT64, is_primary=True, auto_id=True),\n\
+          \                FieldSchema(name=\"source_file\", dtype=DataType.VARCHAR,\
+          \ max_length=512),\n                FieldSchema(name=\"source_document_id\"\
+          , dtype=DataType.VARCHAR, max_length=256),\n                FieldSchema(name=\"\
+          pipeline_run_id\", dtype=DataType.VARCHAR, max_length=64),\n           \
+          \     FieldSchema(name=\"chunk_index\", dtype=DataType.INT64),\n       \
+          \         FieldSchema(name=\"text\", dtype=DataType.VARCHAR, max_length=32768),\n\
+          \                FieldSchema(name=\"category\", dtype=DataType.VARCHAR,\
+          \ max_length=128),\n                FieldSchema(name=\"subcategory\", dtype=DataType.VARCHAR,\
+          \ max_length=128),\n                FieldSchema(name=\"document_date\",\
+          \ dtype=DataType.VARCHAR, max_length=32),\n                FieldSchema(\n\
+          \                    name=\"embedding\",\n                    dtype=DataType.FLOAT_VECTOR,\n\
+          \                    dim=embedding_dim,\n                ),\n          \
+          \  ],\n            description=\"RAG document chunks with traceability and\
+          \ metadata\",\n        )\n        client.create_collection(collection_name=collection_name,\
+          \ schema=schema)\n\n        index_params = client.prepare_index_params()\n\
+          \        if index_type == \"HNSW\":\n            index_params.add_index(\n\
+          \                field_name=\"embedding\",\n                index_type=\"\
+          HNSW\",\n                metric_type=\"COSINE\",\n                params={\"\
+          M\": 16, \"efConstruction\": 256},\n            )\n        elif index_type\
+          \ == \"IVF_FLAT\":\n            index_params.add_index(\n              \
+          \  field_name=\"embedding\",\n                index_type=\"IVF_FLAT\",\n\
+          \                metric_type=\"COSINE\",\n                params={\"nlist\"\
+          : 128},\n            )\n        else:\n            raise ValueError(f\"\
+          Unsupported index_type: {index_type}. Use 'HNSW' or 'IVF_FLAT'.\")\n   \
+          \     client.create_index(collection_name=collection_name, index_params=index_params)\n\
+          \        print(f\"Collection '{collection_name}' created (dim={embedding_dim},\
+          \ {index_type} index).\")\n\n    # --- Setup embedding ---\n    use_endpoint\
+          \ = bool(embedding_endpoint)\n    local_model = None\n\n    if use_endpoint:\n\
+          \        print(f\"Using embedding endpoint: {embedding_endpoint}\")\n  \
+          \  else:\n        print(f\"Using local embedding model: {embedding_model}\"\
+          )\n        from sentence_transformers import SentenceTransformer\n\n   \
+          \     local_model = SentenceTransformer(embedding_model)\n\n    def _embed_and_insert(batch):\n\
+          \        texts = [c[\"text\"] for c in batch]\n        if use_endpoint:\n\
+          \            all_embeddings = []\n            for j in range(0, len(texts),\
+          \ embed_batch_size):\n                embed_batch = texts[j : j + embed_batch_size]\n\
+          \                resp = req_lib.post(\n                    f\"{embedding_endpoint}/v1/embeddings\"\
+          ,\n                    json={\"model\": embedding_model, \"input\": embed_batch},\n\
+          \                    timeout=120,\n                )\n                resp.raise_for_status()\n\
+          \                data = resp.json()[\"data\"]\n                data.sort(key=lambda\
+          \ x: x[\"index\"])\n                all_embeddings.extend([d[\"embedding\"\
+          ] for d in data])\n            embeddings = all_embeddings\n        else:\n\
+          \            embeddings = local_model.encode(\n                texts,\n\
+          \                normalize_embeddings=True,\n                show_progress_bar=False,\n\
+          \                batch_size=embed_batch_size,\n            ).tolist()\n\n\
+          \        data = [\n            {\n                \"source_file\": c[\"\
+          source_file\"],\n                \"source_document_id\": c.get(\"source_document_id\"\
+          , c[\"source_file\"]),\n                \"pipeline_run_id\": pipeline_run_id\
+          \ or \"unknown\",\n                \"chunk_index\": c[\"chunk_index\"],\n\
+          \                \"text\": c[\"text\"],\n                \"category\": c.get(\"\
+          category\", \"\"),\n                \"subcategory\": c.get(\"subcategory\"\
+          , \"\"),\n                \"document_date\": c.get(\"document_date\", \"\
+          \"),\n                \"embedding\": emb,\n            }\n            for\
+          \ c, emb in zip(batch, embeddings)\n        ]\n        client.insert(collection_name=collection_name,\
+          \ data=data)\n        return len(data)\n\n    # --- Embed and insert in\
+          \ streaming batches ---\n    start_time = time.time()\n    total_inserted\
+          \ = 0\n    file_count = 0\n    batch = []\n    seen_files = set()\n\n  \
+          \  for chunk in stream_chunks_from_s3():\n        batch.append(chunk)\n\
+          \        src = chunk.get(\"source_file\", \"\")\n        if src not in seen_files:\n\
+          \            seen_files.add(src)\n            file_count += 1\n\n      \
+          \  if len(batch) < milvus_batch_size:\n            continue\n\n        total_inserted\
+          \ += _embed_and_insert(batch)\n        batch = []\n\n        if (total_inserted\
+          \ // milvus_batch_size) % 10 == 0:\n            elapsed = time.time() -\
+          \ start_time\n            print(f\"  Inserted {total_inserted} vectors ({file_count}\
+          \ files, {elapsed:.1f}s)\")\n\n    if batch:\n        total_inserted +=\
+          \ _embed_and_insert(batch)\n\n    if total_inserted == 0:\n        raise\
+          \ FileNotFoundError(f\"No chunks found in s3://{s3_bucket}/{s3_prefix}/\"\
+          )\n\n    # Load collection for searching\n    client.load_collection(collection_name)\n\
+          \    stats = client.get_collection_stats(collection_name)\n\n    wall_clock\
+          \ = time.time() - start_time\n    print(f\"\\nIngestion complete: {total_inserted}\
+          \ vectors in {wall_clock:.1f}s\")\n    print(f\"Collection stats: {stats}\"\
+          )\n\n    # --- OpenLineage emission (best-effort) ---\n    try:\n      \
+          \  from rhoai_lineage.kfp.lineage import kfp_lineage\n        from rhoai_lineage.naming\
+          \ import s3_dataset, milvus_dataset\n        from urllib.parse import urlparse\
+          \ as _urlparse\n\n        _s3_parsed = _urlparse(s3_endpoint)\n        _s3_host\
+          \ = _s3_parsed.hostname or \"minio\"\n        _s3_port = _s3_parsed.port\
+          \ or 9000\n\n        input_ns, input_name = s3_dataset(\n            bucket=s3_bucket,\
+          \ path=s3_prefix, host=_s3_host, port=_s3_port,\n        )\n        input_ds\
+          \ = {\"namespace\": input_ns, \"name\": input_name}\n\n        output_ns,\
+          \ output_name = milvus_dataset(\n            collection=collection_name,\
+          \ host=milvus_host, port=milvus_port,\n        )\n        output_ds = {\n\
+          \            \"namespace\": output_ns,\n            \"name\": output_name,\n\
+          \            \"facets\": {\n                \"custom_metrics\": {\n    \
+          \                \"_producer\": \"https://github.com/rhoai-lineage\",\n\
+          \                    \"_schemaURL\": \"https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/CustomFacet\"\
+          ,\n                    \"vectors_inserted\": total_inserted,\n         \
+          \           \"embedding_model\": embedding_model,\n                    \"\
+          embedding_dim\": embedding_dim,\n                    \"collection_name\"\
+          : collection_name,\n                    \"index_type\": index_type,\n  \
+          \                  \"duration_seconds\": round(wall_clock, 2),\n       \
+          \         },\n            },\n        }\n\n        ol_run_facets = {}\n\
+          \        if pipeline_run_id:\n            ol_run_facets[\"pipelineRunId\"\
+          ] = {\n                \"_producer\": \"rhoai-lineage\",\n             \
+          \   \"_schemaURL\": \"https://openlineage.io/spec/1-0-0/OpenLineage.json\"\
+          ,\n                \"id\": pipeline_run_id,\n            }\n\n        with\
+          \ kfp_lineage(\n            \"ingest_to_milvus\",\n            inputs=[input_ds],\n\
+          \            outputs=[output_ds],\n            run_facets=ol_run_facets,\n\
+          \        ):\n            pass\n        print(\"OpenLineage COMPLETE event\
+          \ emitted for ingest_to_milvus\")\n    except Exception as e:\n        print(f\"\
+          WARNING: OpenLineage emission failed (non-fatal): {e}\")\n\n    # --- MLflow\
+          \ tracking via REST API (best-effort) ---\n    # Direct REST calls with\
+          \ SA token auth \u2014 the RHOAI MLflow Operator\n    # requires Authorization\
+          \ + X-Mlflow-Workspace headers that the vanilla\n    # mlflow client doesn't\
+          \ inject from KFP pods.\n    try:\n        class _MLflowRESTTracker:\n \
+          \           def __init__(self):\n                self._url = \"https://mlflow.redhat-ods-applications.svc:8443\"\
+          \n                self._headers = {\"Content-Type\": \"application/json\"\
+          }\n                self._run_id = None\n                self._experiment_id\
+          \ = None\n                _sa_token = \"/var/run/secrets/kubernetes.io/serviceaccount/token\"\
+          \n                _sa_ns = \"/var/run/secrets/kubernetes.io/serviceaccount/namespace\"\
+          \n                if os.path.exists(_sa_token):\n                    with\
+          \ open(_sa_token) as f:\n                        self._headers[\"Authorization\"\
+          ] = f\"Bearer {f.read().strip()}\"\n                if os.path.exists(_sa_ns):\n\
+          \                    with open(_sa_ns) as f:\n                        self._headers[\"\
+          X-Mlflow-Workspace\"] = f.read().strip()\n\n            def _post(self,\
+          \ endpoint, data):\n                resp = req_lib.post(f\"{self._url}{endpoint}\"\
+          , json=data,\n                                    headers=self._headers,\
+          \ verify=False, timeout=10)\n                resp.raise_for_status()\n \
+          \               return resp.json()\n\n            def create_experiment(self,\
+          \ name):\n                try:\n                    result = self._post(\"\
+          /api/2.0/mlflow/experiments/create\", {\"name\": name})\n              \
+          \      self._experiment_id = result.get(\"experiment_id\")\n           \
+          \     except Exception:\n                    resp = req_lib.get(f\"{self._url}/api/2.0/mlflow/experiments/get-by-name\"\
+          ,\n                                       params={\"experiment_name\": name},\n\
+          \                                       headers=self._headers, verify=False,\
+          \ timeout=10)\n                    if resp.ok:\n                       \
+          \ self._experiment_id = resp.json().get(\"experiment\", {}).get(\"experiment_id\"\
+          )\n                return self._experiment_id\n\n            def start_run(self,\
+          \ run_name=\"\"):\n                if not self._experiment_id:\n       \
+          \             return None\n                result = self._post(\"/api/2.0/mlflow/runs/create\"\
+          , {\n                    \"experiment_id\": self._experiment_id, \"run_name\"\
+          : run_name,\n                })\n                self._run_id = result.get(\"\
+          run\", {}).get(\"info\", {}).get(\"run_id\")\n                return self._run_id\n\
+          \n            def log_param(self, key, value):\n                if not self._run_id:\n\
+          \                    return\n                self._post(\"/api/2.0/mlflow/runs/log-parameter\"\
+          , {\n                    \"run_id\": self._run_id, \"key\": key, \"value\"\
+          : str(value),\n                })\n\n            def log_metric(self, key,\
+          \ value):\n                if not self._run_id:\n                    return\n\
+          \                self._post(\"/api/2.0/mlflow/runs/log-metric\", {\n   \
+          \                 \"run_id\": self._run_id, \"key\": key, \"value\": float(value),\n\
+          \                    \"timestamp\": int(time.time() * 1000),\n         \
+          \       })\n\n            def end_run(self, status=\"FINISHED\"):\n    \
+          \            if not self._run_id:\n                    return\n        \
+          \        self._post(\"/api/2.0/mlflow/runs/update\", {\n               \
+          \     \"run_id\": self._run_id, \"status\": status,\n                  \
+          \  \"end_time\": int(time.time() * 1000),\n                })\n\n      \
+          \  tracker = _MLflowRESTTracker()\n        tracker.create_experiment(\"\
+          data-strat-ingest\")\n        tracker.start_run(run_name=f\"ingest-{collection_name}\"\
+          )\n        tracker.log_param(\"collection_name\", collection_name)\n   \
+          \     tracker.log_param(\"embedding_model\", embedding_model)\n        tracker.log_param(\"\
+          embedding_dim\", str(embedding_dim))\n        tracker.log_param(\"index_type\"\
+          , index_type)\n        tracker.log_param(\"pipeline_run_id\", pipeline_run_id)\n\
+          \        tracker.log_param(\"milvus_host\", milvus_host)\n        tracker.log_metric(\"\
+          vectors_inserted\", float(total_inserted))\n        tracker.log_metric(\"\
+          duration_seconds\", wall_clock)\n        tracker.log_metric(\"source_files\"\
+          , float(file_count))\n        tracker.end_run()\n        print(\"MLflow:\
+          \ logged ingest run to experiment 'data-strat-ingest'\")\n    except Exception\
+          \ as e:\n        print(f\"MLflow tracking failed (non-blocking): {e}\")\n\
+          \n    return f\"{collection_name}:{total_inserted}\"\n\n"
+        image: registry.redhat.io/rhoai/odh-pipeline-runtime-datascience-cpu-py312-rhel9@sha256:f9844dc150592a9f196283b3645dda92bd80dfdb3d467fa8725b10267ea5bdbc
+    exec-parse-and-chunk:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - parse_and_chunk
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'codeflare-sdk==0.35.0'\
+          \ 'kubernetes>=28.1.0' 'rhoai-lineage @ git+https://github.com/briangallagher/rhoai-lineage.git'\
+          \ 'requests>=2.28.0'  &&  python3 -m pip install --quiet --no-warn-script-location\
+          \ 'kfp==2.16.1' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"\
+          3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef parse_and_chunk(\n    pvc_name: str,\n    pvc_mount_path: str,\n\
+          \    input_path: str,\n    ray_image: str,\n    namespace: str,\n    s3_endpoint:\
+          \ str,\n    s3_bucket: str,\n    s3_prefix: str = \"chunks\",\n    s3_secret_name:\
+          \ str = \"minio-secret\",\n    tokenizer: str = \"sentence-transformers/all-MiniLM-L6-v2\"\
+          ,\n    chunk_max_tokens: int = 256,\n    num_workers: int = 2,\n    worker_cpus:\
+          \ int = 8,\n    worker_memory_gb: int = 16,\n    head_cpus: int = 2,\n \
+          \   head_memory_gb: int = 8,\n    cpus_per_actor: int = 4,\n    min_actors:\
+          \ int = 2,\n    max_actors: int = 4,\n    batch_size: int = 4,\n    num_files:\
+          \ int = 0,\n    timeout_seconds: int = 600,\n    enable_profiling: bool\
+          \ = False,\n    verbose: bool = True,\n    bypass_kueue: bool = False,\n\
+          \    doc_category: str = \"\",\n    doc_subcategory: str = \"\",\n    doc_date:\
+          \ str = \"\",\n) -> str:\n    \"\"\"Parse PDFs and write chunked JSONL files\
+          \ to S3.\n\n    Args:\n        pvc_name: Name of the PVC with input PDFs.\n\
+          \        pvc_mount_path: Mount path for the PVC inside pods.\n        input_path:\
+          \ Relative path to input PDFs under the PVC.\n        ray_image: Container\
+          \ image with Ray + Docling pre-installed.\n        namespace: OpenShift\
+          \ namespace for the RayJob.\n        s3_endpoint: S3-compatible endpoint\
+          \ URL (e.g. MinIO).\n        s3_bucket: S3 bucket for output chunks.\n \
+          \       s3_prefix: Key prefix for chunk files in S3.\n        s3_secret_name:\
+          \ Kubernetes Secret with S3 credentials (keys: access_key, secret_key).\n\
+          \        tokenizer: Tokenizer for HybridChunker (usually the embedding model\
+          \ name).\n        chunk_max_tokens: Max tokens per chunk (HybridChunker).\n\
+          \        num_workers: Number of Ray worker pods.\n        worker_cpus: CPUs\
+          \ per worker pod.\n        worker_memory_gb: Memory (GB) per worker pod.\n\
+          \        head_cpus: CPUs for the Ray head pod.\n        head_memory_gb:\
+          \ Memory (GB) for the Ray head pod.\n        cpus_per_actor: CPUs per Docling\
+          \ processing actor.\n        min_actors: Minimum actor pool size.\n    \
+          \    max_actors: Maximum actor pool size.\n        batch_size: Files per\
+          \ batch sent to each actor.\n        num_files: Number of PDFs to process\
+          \ (0 = all).\n        timeout_seconds: Per-file processing timeout.\n  \
+          \      enable_profiling: Enable cProfile profiling (outputs profile stats).\n\
+          \        verbose: Enable verbose logging for debugging.\n        bypass_kueue:\
+          \ If True, remove the Kueue queue-name label and manually\n            unsuspend\
+          \ the RayJob, bypassing cluster quota management. Only use\n           \
+          \ on clusters without Kueue or with sufficient free resources.\n\n    Returns:\n\
+          \        The S3 URI where JSONL chunk files were written.\n    \"\"\"\n\
+          \    import base64\n    import textwrap\n    import time\n\n    # Entrypoint\
+          \ script that runs on the Ray cluster.\n    # It parses PDFs with Docling,\
+          \ chunks with HybridChunker,\n    # and writes JSONL files to S3.\n    _DOCLING_CHUNK_PROCESS_PY\
+          \ = textwrap.dedent('''\\\n        \"\"\"Ray Data + Docling: parse PDFs\
+          \ and chunk with HybridChunker.\"\"\"\n\n        import glob\n        import\
+          \ io\n        import json\n        import multiprocessing as mp\n      \
+          \  import os\n        import queue\n        import time\n        from typing\
+          \ import Dict, List\n\n        import pandas as pd\n        import ray\n\
+          \n        MIN_ACTORS = int(os.environ.get(\"MIN_ACTORS\", \"2\"))\n    \
+          \    MAX_ACTORS = int(os.environ.get(\"MAX_ACTORS\", \"4\"))\n        CPUS_PER_ACTOR\
+          \ = int(os.environ.get(\"CPUS_PER_ACTOR\", \"4\"))\n        BATCH_SIZE =\
+          \ int(os.environ.get(\"BATCH_SIZE\", \"4\"))\n        REPARTITION_FACTOR\
+          \ = int(os.environ.get(\"REPARTITION_FACTOR\", \"10\"))\n\n        PVC_MOUNT_PATH\
+          \ = os.environ.get(\"PVC_MOUNT_PATH\", \"/mnt/data\")\n        INPUT_PATH\
+          \ = os.environ.get(\"INPUT_PATH\", \"input/pdfs\")\n        NUM_FILES =\
+          \ int(os.environ.get(\"NUM_FILES\", \"0\"))\n\n        FILE_TIMEOUT = int(os.environ.get(\"\
+          FILE_TIMEOUT\", \"600\"))\n        MAX_ERRORED_BLOCKS = int(os.environ.get(\"\
+          MAX_ERRORED_BLOCKS\", \"50\"))\n\n        CHUNK_MAX_TOKENS = int(os.environ.get(\"\
+          CHUNK_MAX_TOKENS\", \"256\"))\n        TOKENIZER = os.environ.get(\"TOKENIZER\"\
+          , \"sentence-transformers/all-MiniLM-L6-v2\")\n\n        S3_ENDPOINT = os.environ.get(\"\
+          S3_ENDPOINT\", \"\")\n        S3_BUCKET = os.environ.get(\"S3_BUCKET\",\
+          \ \"rag-chunks\")\n        S3_PREFIX = os.environ.get(\"S3_PREFIX\", \"\
+          chunks\")\n        S3_ACCESS_KEY = os.environ.get(\"S3_ACCESS_KEY\", \"\"\
+          )\n        S3_SECRET_KEY = os.environ.get(\"S3_SECRET_KEY\", \"\")\n\n \
+          \       ENABLE_PROFILING = os.environ.get(\"ENABLE_PROFILING\", \"false\"\
+          ).lower() == \"true\"\n        VERBOSE = os.environ.get(\"VERBOSE\", \"\
+          true\").lower() == \"true\"\n\n        def log_verbose(msg):\n         \
+          \   \"\"\"Log message if VERBOSE is enabled.\"\"\"\n            if VERBOSE:\n\
+          \                print(f\"[VERBOSE] {msg}\", flush=True)\n\n\n        def\
+          \ _get_s3_client():\n            import boto3\n            return boto3.client(\n\
+          \                \"s3\",\n                endpoint_url=S3_ENDPOINT,\n  \
+          \              aws_access_key_id=S3_ACCESS_KEY,\n                aws_secret_access_key=S3_SECRET_KEY,\n\
+          \                region_name=\"us-east-1\",\n            )\n\n\n       \
+          \ def _ensure_bucket(s3_client, bucket):\n            try:\n           \
+          \     s3_client.head_bucket(Bucket=bucket)\n            except s3_client.exceptions.ClientError:\n\
+          \                s3_client.create_bucket(Bucket=bucket)\n              \
+          \  print(f\"Created S3 bucket '{bucket}'\")\n\n\n        def _converter_worker(\n\
+          \            req_q, res_q, cpus_per_actor, chunk_max_tokens, tokenizer_name,\n\
+          \            s3_endpoint, s3_bucket, s3_prefix, s3_access_key, s3_secret_key,\n\
+          \        ):\n            import socket\n            worker_host = socket.gethostname()\n\
+          \            worker_pid = os.getpid()\n\n            log_verbose(f\"[Worker\
+          \ {worker_pid}@{worker_host}] Initializing converter worker\")\n       \
+          \     log_verbose(f\"[Worker {worker_pid}] CPUs per actor: {cpus_per_actor}\"\
+          )\n            log_verbose(f\"[Worker {worker_pid}] Chunk max tokens: {chunk_max_tokens}\"\
+          )\n            log_verbose(f\"[Worker {worker_pid}] Tokenizer: {tokenizer_name}\"\
+          )\n\n            os.environ[\"OMP_NUM_THREADS\"] = str(cpus_per_actor)\n\
+          \            os.environ[\"MKL_NUM_THREADS\"] = str(cpus_per_actor)\n   \
+          \         os.environ[\"TOKENIZERS_PARALLELISM\"] = \"false\"\n\n       \
+          \     import boto3\n            from docling.chunking import HybridChunker\n\
+          \            from docling.datamodel.base_models import DocumentStream, InputFormat\n\
+          \            from docling.datamodel.pipeline_options import (\n        \
+          \        AcceleratorOptions, PdfPipelineOptions,\n            )\n      \
+          \      from docling.document_converter import DocumentConverter, PdfFormatOption\n\
+          \n            log_verbose(f\"[Worker {worker_pid}] Creating Docling converter...\"\
+          )\n            pipeline_options = PdfPipelineOptions()\n            pipeline_options.do_ocr\
+          \ = False\n            pipeline_options.do_table_structure = True\n    \
+          \        pipeline_options.accelerator_options = AcceleratorOptions(\n  \
+          \              num_threads=cpus_per_actor, device=\"cpu\",\n           \
+          \ )\n            converter = DocumentConverter(\n                format_options={\n\
+          \                    InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)\n\
+          \                }\n            )\n            log_verbose(f\"[Worker {worker_pid}]\
+          \ Converter created\")\n\n            log_verbose(f\"[Worker {worker_pid}]\
+          \ Creating HybridChunker...\")\n            chunker = HybridChunker(tokenizer=tokenizer_name,\
+          \ max_tokens=chunk_max_tokens)\n            log_verbose(f\"[Worker {worker_pid}]\
+          \ Chunker created\")\n\n            log_verbose(f\"[Worker {worker_pid}]\
+          \ Connecting to S3: {s3_endpoint}\")\n            s3 = boto3.client(\n \
+          \               \"s3\", endpoint_url=s3_endpoint,\n                aws_access_key_id=s3_access_key,\n\
+          \                aws_secret_access_key=s3_secret_key,\n                region_name=\"\
+          us-east-1\",\n            )\n            log_verbose(f\"[Worker {worker_pid}]\
+          \ S3 client connected\")\n\n            res_q.put((\"ready\",))\n      \
+          \      log_verbose(f\"[Worker {worker_pid}] Ready to process files\")\n\n\
+          \            file_count = 0\n            while True:\n                msg\
+          \ = req_q.get()\n                if msg is None:\n                    log_verbose(f\"\
+          [Worker {worker_pid}] Shutdown signal received, processed {file_count} files\"\
+          )\n                    break\n                file_path = msg\n        \
+          \        file_count += 1\n                fname = os.path.basename(file_path)\n\
+          \n                try:\n                    t_start = time.time()\n    \
+          \                log_verbose(f\"[Worker {worker_pid}] Processing file {file_count}:\
+          \ {fname}\")\n\n                    with open(file_path, \"rb\") as f:\n\
+          \                        file_bytes = f.read()\n                    if len(file_bytes)\
+          \ == 0:\n                        log_verbose(f\"[Worker {worker_pid}] {fname}:\
+          \ EMPTY FILE\")\n                        res_q.put((\"error\", file_path,\
+          \ 0, 0, \"File empty\"))\n                        continue\n\n         \
+          \           log_verbose(f\"[Worker {worker_pid}] {fname}: Read {len(file_bytes)}\
+          \ bytes\")\n                    stem = os.path.splitext(fname)[0]\n    \
+          \                stream = DocumentStream(name=fname, stream=io.BytesIO(file_bytes))\n\
+          \n                    t_convert_start = time.time()\n                  \
+          \  result = converter.convert(stream)\n                    t_convert = time.time()\
+          \ - t_convert_start\n                    log_verbose(f\"[Worker {worker_pid}]\
+          \ {fname}: Converted in {t_convert:.2f}s\")\n\n                    doc =\
+          \ result.document\n                    pages = getattr(doc, \"pages\", None)\n\
+          \                    page_count = len(pages) if pages is not None else 0\n\
+          \                    log_verbose(f\"[Worker {worker_pid}] {fname}: {page_count}\
+          \ pages\")\n\n                    t_chunk_start = time.time()\n        \
+          \            chunks = list(chunker.chunk(doc))\n                    t_chunk\
+          \ = time.time() - t_chunk_start\n                    log_verbose(f\"[Worker\
+          \ {worker_pid}] {fname}: Generated {len(chunks)} chunks in {t_chunk:.2f}s\"\
+          )\n\n                    if not chunks:\n                        log_verbose(f\"\
+          [Worker {worker_pid}] {fname}: NO CHUNKS GENERATED\")\n                \
+          \        res_q.put((\"empty\", file_path, page_count, 0, \"No chunks\"))\n\
+          \                        continue\n\n                    lines = []\n  \
+          \                  doc_id = stem.lower().replace(\" \", \"-\")\n       \
+          \             for idx, chunk in enumerate(chunks):\n                   \
+          \     if chunk.text.strip():\n                            lines.append(json.dumps({\n\
+          \                                \"source_file\": fname,\n             \
+          \                   \"source_document_id\": doc_id,\n                  \
+          \              \"chunk_index\": idx,\n                                \"\
+          text\": chunk.text,\n                                \"category\": os.environ.get(\"\
+          DOC_CATEGORY\", \"\"),\n                                \"subcategory\"\
+          : os.environ.get(\"DOC_SUBCATEGORY\", \"\"),\n                         \
+          \       \"document_date\": os.environ.get(\"DOC_DATE\", \"\"),\n       \
+          \                     }))\n                    if not lines:\n         \
+          \               log_verbose(f\"[Worker {worker_pid}] {fname}: ALL CHUNKS\
+          \ EMPTY\")\n                        res_q.put((\"empty\", file_path, page_count,\
+          \ 0, \"All chunks empty\"))\n                        continue\n\n      \
+          \              log_verbose(f\"[Worker {worker_pid}] {fname}: {len(lines)}\
+          \ non-empty chunks\")\n                    jsonl_body = \"\\\\n\".join(lines)\
+          \ + \"\\\\n\"\n                    s3_key = f\"{s3_prefix}/{stem}.jsonl\"\
+          \n\n                    t_s3_start = time.time()\n                    s3.put_object(\n\
+          \                        Bucket=s3_bucket, Key=s3_key,\n               \
+          \         Body=jsonl_body.encode(\"utf-8\"),\n                        ContentType=\"\
+          application/jsonl\",\n                    )\n                    t_s3 =\
+          \ time.time() - t_s3_start\n\n                    t_total = time.time()\
+          \ - t_start\n                    log_verbose(\n                        f\"\
+          [Worker {worker_pid}] {fname}: Uploaded to \"\n                        f\"\
+          s3://{s3_bucket}/{s3_key} in {t_s3:.2f}s (total: {t_total:.2f}s)\"\n   \
+          \                 )\n\n                    res_q.put((\"success\", file_path,\
+          \ page_count, len(lines), \"\"))\n\n                except Exception as\
+          \ e:\n                    t_total = time.time() - t_start\n            \
+          \        error_msg = str(e)[:200]\n                    log_verbose(f\"[Worker\
+          \ {worker_pid}] {fname}: ERROR after {t_total:.2f}s: {error_msg}\")\n  \
+          \                  res_q.put((\"error\", file_path, 0, 0, error_msg))\n\n\
+          \n        class DoclingChunkProcessor:\n            def __init__(self):\n\
+          \                import socket\n                self.hostname = socket.gethostname()\n\
+          \                self.batch_count = 0\n                log_verbose(f\"[Actor@{self.hostname}]\
+          \ Initializing DoclingChunkProcessor\")\n                self._start_worker()\n\
+          \                print(f\"[{self.hostname}] DoclingChunkProcessor ready\
+          \ (pid={self._worker.pid})\")\n\n            def _start_worker(self):\n\
+          \                log_verbose(f\"[Actor@{self.hostname}] Starting converter\
+          \ worker subprocess\")\n                self._req_q = mp.Queue()\n     \
+          \           self._res_q = mp.Queue()\n                self._worker = mp.Process(\n\
+          \                    target=_converter_worker,\n                    args=(\n\
+          \                        self._req_q, self._res_q, CPUS_PER_ACTOR,\n   \
+          \                     CHUNK_MAX_TOKENS, TOKENIZER, S3_ENDPOINT, S3_BUCKET,\n\
+          \                        S3_PREFIX, S3_ACCESS_KEY, S3_SECRET_KEY,\n    \
+          \                ),\n                    daemon=True,\n                )\n\
+          \                self._worker.start()\n                log_verbose(f\"[Actor@{self.hostname}]\
+          \ Waiting for worker to be ready...\")\n                msg = self._res_q.get(timeout=600)\n\
+          \                assert msg[0] == \"ready\"\n                log_verbose(f\"\
+          [Actor@{self.hostname}] Worker ready (pid={self._worker.pid})\")\n\n   \
+          \         def _restart_worker(self):\n                log_verbose(f\"[Actor@{self.hostname}]\
+          \ Restarting worker (previous pid={self._worker.pid})\")\n             \
+          \   if self._worker.is_alive():\n                    self._worker.terminate()\n\
+          \                    self._worker.join(timeout=5)\n                    if\
+          \ self._worker.is_alive():\n                        self._worker.kill()\n\
+          \                        self._worker.join()\n                # Drain the\
+          \ queue\n                while True:\n                    try:\n       \
+          \                 self._res_q.get_nowait()\n                    except queue.Empty:\n\
+          \                        break\n                self._start_worker()\n \
+          \               print(f\"[{self.hostname}] Restarted converter (new pid={self._worker.pid})\"\
+          )\n\n            def __call__(self, batch):\n                path_list =\
+          \ batch[\"path\"]\n                self.batch_count += 1\n             \
+          \   batch_num = self.batch_count\n                log_verbose(f\"[Actor@{self.hostname}]\
+          \ Processing batch #{batch_num} with {len(path_list)} files\")\n\n     \
+          \           out = {k: [] for k in [\n                    \"source_file\"\
+          , \"status\", \"page_count\", \"chunk_count\",\n                    \"error\"\
+          , \"duration_s\", \"actor_host\",\n                ]}\n\n              \
+          \  for idx, file_path in enumerate(path_list, 1):\n                    fname\
+          \ = os.path.basename(file_path)\n                    log_verbose(f\"[Actor@{self.hostname}]\
+          \ Batch #{batch_num}, file {idx}/{len(path_list)}: {fname}\")\n\n      \
+          \              t0 = time.time()\n                    self._req_q.put(str(file_path))\n\
+          \                    try:\n                        result = self._res_q.get(timeout=FILE_TIMEOUT)\n\
+          \                        status, _, page_count, chunk_count, error_msg =\
+          \ result\n                        elapsed = round(time.time() - t0, 3)\n\
+          \                        log_verbose(\n                            f\"[Actor@{self.hostname}]\
+          \ {fname}: {status} in {elapsed}s \"\n                            f\"(pages={page_count},\
+          \ chunks={chunk_count})\"\n                        )\n                 \
+          \   except queue.Empty:\n                        status, page_count, chunk_count\
+          \ = \"timeout\", 0, 0\n                        error_msg = f\"Timed out\
+          \ after {FILE_TIMEOUT}s\"\n                        elapsed = round(time.time()\
+          \ - t0, 3)\n                        log_verbose(f\"[Actor@{self.hostname}]\
+          \ {fname}: TIMEOUT after {elapsed}s, restarting worker\")\n            \
+          \            self._restart_worker()\n\n                    out[\"source_file\"\
+          ].append(fname)\n                    out[\"status\"].append(status)\n  \
+          \                  out[\"page_count\"].append(page_count)\n            \
+          \        out[\"chunk_count\"].append(chunk_count)\n                    out[\"\
+          error\"].append(error_msg)\n                    out[\"duration_s\"].append(elapsed)\n\
+          \                    out[\"actor_host\"].append(self.hostname)\n\n     \
+          \           log_verbose(f\"[Actor@{self.hostname}] Completed batch #{batch_num}\"\
+          )\n                return out\n\n\n        def run():\n            print(\"\
+          =\" * 80)\n            print(\"DOCLING PDF PARSING & CHUNKING JOB\")\n \
+          \           print(\"=\" * 80)\n            log_verbose(f\"Configuration:\"\
+          )\n            log_verbose(f\"  PVC mount: {PVC_MOUNT_PATH}\")\n       \
+          \     log_verbose(f\"  Input path: {INPUT_PATH}\")\n            log_verbose(f\"\
+          \  Full input path: {os.path.join(PVC_MOUNT_PATH, INPUT_PATH)}\")\n    \
+          \        log_verbose(f\"  Number of files: {NUM_FILES if NUM_FILES > 0 else\
+          \ 'all'}\")\n            log_verbose(f\"  Actors: {MIN_ACTORS} to {MAX_ACTORS}\"\
+          )\n            log_verbose(f\"  CPUs per actor: {CPUS_PER_ACTOR}\")\n  \
+          \          log_verbose(f\"  Batch size: {BATCH_SIZE}\")\n            log_verbose(f\"\
+          \  Chunk max tokens: {CHUNK_MAX_TOKENS}\")\n            log_verbose(f\"\
+          \  Tokenizer: {TOKENIZER}\")\n            log_verbose(f\"  File timeout:\
+          \ {FILE_TIMEOUT}s\")\n            log_verbose(f\"  S3 endpoint: {S3_ENDPOINT}\"\
+          )\n            log_verbose(f\"  S3 bucket: {S3_BUCKET}\")\n            log_verbose(f\"\
+          \  S3 prefix: {S3_PREFIX}\")\n            log_verbose(f\"  Verbose: {VERBOSE}\"\
+          )\n            log_verbose(f\"  Profiling: {ENABLE_PROFILING}\")\n\n   \
+          \         print(f\"\\\\nScanning for PDFs...\")\n            input_full_path\
+          \ = os.path.join(PVC_MOUNT_PATH, INPUT_PATH)\n            log_verbose(f\"\
+          Globbing: {input_full_path}/**/*.pdf\")\n            pdf_paths = sorted(glob.glob(f\"\
+          {input_full_path}/**/*.pdf\", recursive=True))\n            print(f\"  Found\
+          \ {len(pdf_paths)} total PDFs\")\n\n            if NUM_FILES > 0:\n    \
+          \            pdf_paths = pdf_paths[:NUM_FILES]\n                print(f\"\
+          \  Limited to first {NUM_FILES} PDFs\")\n\n            print(f\"  Processing\
+          \ {len(pdf_paths)} PDFs\")\n\n            if not pdf_paths:\n          \
+          \      print(\"\\\\nERROR: No PDFs found. Exiting.\")\n                log_verbose(\"\
+          Checked paths:\")\n                log_verbose(f\"  - {input_full_path}\"\
+          )\n                log_verbose(f\"  - {os.path.join(PVC_MOUNT_PATH, 'input/pdfs')}\"\
+          )\n                return\n\n            if VERBOSE and len(pdf_paths) <=\
+          \ 20:\n                log_verbose(\"PDFs to process:\")\n             \
+          \   for i, path in enumerate(pdf_paths, 1):\n                    log_verbose(f\"\
+          \  {i}. {path}\")\n\n            print(f\"\\\\nSetting up S3...\")\n   \
+          \         s3 = _get_s3_client()\n            _ensure_bucket(s3, S3_BUCKET)\n\
+          \            print(f\"  Output: s3://{S3_BUCKET}/{S3_PREFIX}/\")\n\n   \
+          \         print(f\"\\\\nPreparing Ray dataset...\")\n            target_blocks\
+          \ = MAX_ACTORS * REPARTITION_FACTOR\n            log_verbose(f\"Creating\
+          \ dataset from {len(pdf_paths)} paths\")\n            ds = ray.data.from_pandas(pd.DataFrame({\"\
+          path\": pdf_paths}))\n            log_verbose(f\"Repartitioning to {target_blocks}\
+          \ blocks ({MAX_ACTORS} actors \xD7 {REPARTITION_FACTOR})\")\n          \
+          \  ds = ds.repartition(target_blocks)\n            print(f\"  Repartitioned\
+          \ into {target_blocks} blocks for {MAX_ACTORS} max actors\")\n\n       \
+          \     print(f\"\\\\nStarting document processing...\")\n            log_verbose(f\"\
+          Creating actor pool strategy (min={MIN_ACTORS}, max={MAX_ACTORS})\")\n \
+          \           results_ds = ds.map_batches(\n                DoclingChunkProcessor,\n\
+          \                compute=ray.data.ActorPoolStrategy(\n                 \
+          \   min_size=MIN_ACTORS, max_size=MAX_ACTORS,\n                ),\n    \
+          \            batch_size=BATCH_SIZE,\n                batch_format=\"numpy\"\
+          ,\n                num_cpus=CPUS_PER_ACTOR,\n            )\n\n         \
+          \   print(f\"  Actor pool: {MIN_ACTORS}-{MAX_ACTORS} actors\")\n       \
+          \     print(f\"  Batch size: {BATCH_SIZE} files/batch\")\n            print(f\"\
+          \  Expected total batches: ~{len(pdf_paths) // BATCH_SIZE + 1}\")\n    \
+          \        print(\"\")\n\n            start_time = time.time()\n         \
+          \   success_count = error_count = timeout_count = empty_count = 0\n    \
+          \        total_pages = total_chunks = 0\n            actor_dist = {}\n \
+          \           errors_list = []\n            last_report_time = start_time\n\
+          \            report_interval = 30  # Report progress every 30 seconds\n\n\
+          \            batch_num = 0\n            for batch in results_ds.iter_batches(batch_size=200,\
+          \ batch_format=\"numpy\"):\n                batch_num += 1\n           \
+          \     n = len(batch[\"source_file\"])\n                log_verbose(f\"Processing\
+          \ result batch {batch_num} with {n} files\")\n\n                for i in\
+          \ range(n):\n                    status = str(batch[\"status\"][i])\n  \
+          \                  fname = str(batch[\"source_file\"][i])\n            \
+          \        if status == \"success\":\n                        success_count\
+          \ += 1\n                    elif status == \"timeout\":\n              \
+          \          timeout_count += 1\n                        errors_list.append((fname,\
+          \ str(batch[\"error\"][i])))\n                    elif status == \"empty\"\
+          :\n                        empty_count += 1\n                    else:\n\
+          \                        error_count += 1\n                        errors_list.append((fname,\
+          \ str(batch[\"error\"][i])))\n                    total_pages += int(batch[\"\
+          page_count\"][i])\n                    total_chunks += int(batch[\"chunk_count\"\
+          ][i])\n                    actor = str(batch[\"actor_host\"][i])\n     \
+          \               actor_dist[actor] = actor_dist.get(actor, 0) + 1\n\n   \
+          \             # Progress reporting\n                now = time.time()\n\
+          \                if now - last_report_time >= report_interval:\n       \
+          \             elapsed = now - start_time\n                    total_processed\
+          \ = success_count + error_count + timeout_count + empty_count\n        \
+          \            pct = (total_processed / len(pdf_paths) * 100) if pdf_paths\
+          \ else 0\n                    rate = total_processed / elapsed if elapsed\
+          \ > 0 else 0\n                    eta = (len(pdf_paths) - total_processed)\
+          \ / rate if rate > 0 else 0\n                    print(f\"  Progress: {total_processed}/{len(pdf_paths)}\
+          \ ({pct:.1f}%) | \"\n                          f\"{rate:.1f} files/s | ETA:\
+          \ {eta/60:.1f}min\")\n                    last_report_time = now\n\n   \
+          \         wall_clock = time.time() - start_time\n            total_files\
+          \ = success_count + error_count + timeout_count + empty_count\n        \
+          \    print(f\"\\\\n  Completed in {wall_clock:.1f}s\")\n\n            s3_objects\
+          \ = s3.list_objects_v2(Bucket=S3_BUCKET, Prefix=S3_PREFIX + \"/\")\n   \
+          \         s3_count = s3_objects.get(\"KeyCount\", 0)\n\n            print(\"\
+          \\\\n\" + \"=\" * 60)\n            print(\"PARSE & CHUNK REPORT\")\n   \
+          \         print(\"=\" * 60)\n            print(f\"Actors:            {MIN_ACTORS}..{MAX_ACTORS}\
+          \ (CPUs/actor: {CPUS_PER_ACTOR})\")\n            print(f\"Output:      \
+          \      s3://{S3_BUCKET}/{S3_PREFIX}/\")\n            print(f\"Total files:\
+          \       {total_files}\")\n            print(f\"Success:           {success_count}\"\
+          )\n            print(f\"Empty:             {empty_count}\")\n          \
+          \  print(f\"Errors:            {error_count}\")\n            print(f\"Timeouts:\
+          \          {timeout_count}\")\n            print(f\"Total pages:       {total_pages}\"\
+          )\n            print(f\"Total chunks:      {total_chunks}\")\n         \
+          \   print(f\"S3 objects:        {s3_count}\")\n            print(f\"Wall\
+          \ clock:        {wall_clock:.1f}s\")\n            if wall_clock > 0:\n \
+          \               print(f\"Files/second:      {success_count / wall_clock:.2f}\"\
+          )\n                print(f\"Chunks/second:     {total_chunks / wall_clock:.2f}\"\
+          )\n            for actor, count in sorted(actor_dist.items()):\n       \
+          \         pct = count / total_files * 100 if total_files else 0.0\n    \
+          \            print(f\"  {actor}: {count} files ({pct:.1f}%)\")\n       \
+          \     if errors_list:\n                for fname, err in errors_list[:10]:\n\
+          \                    print(f\"  {fname}: {err[:80]}\")\n            print(\"\
+          =\" * 60)\n\n\n        if __name__ == \"__main__\":\n            import\
+          \ sys\n            print(f\"Python version: {sys.version}\")\n         \
+          \   print(f\"Ray initializing...\")\n            ray.init(ignore_reinit_error=True)\n\
+          \            print(f\"Ray initialized\")\n\n            ctx = ray.data.DataContext.get_current()\n\
+          \            ctx.max_errored_blocks = MAX_ERRORED_BLOCKS\n            log_verbose(f\"\
+          Set max_errored_blocks to {MAX_ERRORED_BLOCKS}\")\n\n            if ENABLE_PROFILING:\n\
+          \                import cProfile\n                import pstats\n      \
+          \          import io\n                print(\"\\\\n\" + \"=\" * 80)\n  \
+          \              print(\"PROFILING ENABLED\")\n                print(\"=\"\
+          \ * 80)\n                profiler = cProfile.Profile()\n               \
+          \ profiler.enable()\n                try:\n                    run()\n \
+          \               finally:\n                    profiler.disable()\n     \
+          \               print(\"\\\\n\" + \"=\" * 80)\n                    print(\"\
+          PROFILING RESULTS\")\n                    print(\"=\" * 80)\n          \
+          \          s = io.StringIO()\n                    ps = pstats.Stats(profiler,\
+          \ stream=s).sort_stats(\"cumulative\")\n                    ps.print_stats(50)\
+          \  # Top 50 functions\n                    print(s.getvalue())\n       \
+          \             print(\"=\" * 80)\n            else:\n                run()\n\
+          \    ''')\n\n    from kubernetes import client as k8s_client\n    from kubernetes\
+          \ import config as k8s_config\n    import os\n\n    sa_token_path = \"/var/run/secrets/kubernetes.io/serviceaccount/token\"\
+          \n    sa_ca_path = \"/var/run/secrets/kubernetes.io/serviceaccount/ca.crt\"\
+          \n\n    if os.path.exists(sa_token_path):\n        conf = k8s_client.Configuration()\n\
+          \        conf.host = \"https://kubernetes.default.svc\"\n        conf.ssl_ca_cert\
+          \ = sa_ca_path\n        with open(sa_token_path) as f:\n            token\
+          \ = f.read().strip()\n        conf.api_key = {\"BearerToken\": token}\n\
+          \        conf.api_key_prefix = {\"BearerToken\": \"Bearer\"}\n        api_client\
+          \ = k8s_client.ApiClient(conf)\n        print(\"Configured K8s client from\
+          \ service account token\")\n    else:\n        try:\n            k8s_config.load_incluster_config()\n\
+          \        except k8s_config.ConfigException:\n            k8s_config.load_kube_config()\n\
+          \        api_client = k8s_client.ApiClient()\n\n    from codeflare_sdk import\
+          \ ManagedClusterConfig, RayJob\n    from kubernetes.client import (\n  \
+          \      V1PersistentVolumeClaimVolumeSource,\n        V1Volume,\n       \
+          \ V1VolumeMount,\n    )\n    from ray.runtime_env import RuntimeEnv\n\n\
+          \    rayjob_name = f\"docling-chunk-{int(time.time())}\"\n\n    script_b64\
+          \ = base64.b64encode(_DOCLING_CHUNK_PROCESS_PY.encode()).decode()\n\n  \
+          \  shared_mount = V1VolumeMount(pvc_mount_path, name=\"shared-data\", read_only=True)\n\
+          \    data_volume = V1Volume(\n        name=\"shared-data\",\n        persistent_volume_claim=V1PersistentVolumeClaimVolumeSource(\n\
+          \            claim_name=pvc_name,\n        ),\n    )\n\n    cluster_config\
+          \ = ManagedClusterConfig(\n        head_cpu_requests=head_cpus,\n      \
+          \  head_cpu_limits=head_cpus,\n        head_memory_requests=head_memory_gb,\n\
+          \        head_memory_limits=head_memory_gb,\n        num_workers=num_workers,\n\
+          \        worker_cpu_requests=worker_cpus,\n        worker_cpu_limits=worker_cpus,\n\
+          \        worker_memory_requests=worker_memory_gb,\n        worker_memory_limits=worker_memory_gb,\n\
+          \        volume_mounts=[shared_mount],\n        volumes=[data_volume],\n\
+          \        image=ray_image,\n        envs={\n            \"RAY_DEFAULT_OBJECT_STORE_MEMORY_PROPORTION\"\
+          : \"0.1\",\n            \"RAY_OBJECT_STORE_MEMORY\": \"78643200\",\n   \
+          \         \"HF_HOME\": \"/tmp/.hf_cache\",\n        },\n    )\n\n    job\
+          \ = RayJob(\n        job_name=rayjob_name,\n        entrypoint=\"python\
+          \ -c \\\"import base64,os;exec(base64.b64decode(os.environ['ENTRYPOINT_SCRIPT']).decode())\\\
+          \"\",\n        cluster_config=cluster_config,\n        namespace=namespace,\n\
+          \        runtime_env=RuntimeEnv(\n            pip=[\n                \"\
+          opencv-python-headless\",\n                \"pypdfium2\",\n            \
+          \    \"boto3>=1.28.0\",\n            ],\n            env_vars={\n      \
+          \          \"ENTRYPOINT_SCRIPT\": script_b64,\n                \"PVC_MOUNT_PATH\"\
+          : pvc_mount_path,\n                \"INPUT_PATH\": input_path,\n       \
+          \         \"NUM_FILES\": str(num_files),\n                \"MIN_ACTORS\"\
+          : str(min_actors),\n                \"MAX_ACTORS\": str(max_actors),\n \
+          \               \"CPUS_PER_ACTOR\": str(cpus_per_actor),\n             \
+          \   \"BATCH_SIZE\": str(batch_size),\n                \"REPARTITION_FACTOR\"\
+          : \"10\",\n                \"FILE_TIMEOUT\": str(timeout_seconds),\n   \
+          \             \"MAX_ERRORED_BLOCKS\": \"50\",\n                \"CHUNK_MAX_TOKENS\"\
+          : str(chunk_max_tokens),\n                \"TOKENIZER\": tokenizer,\n  \
+          \              \"S3_ENDPOINT\": s3_endpoint,\n                \"S3_BUCKET\"\
+          : s3_bucket,\n                \"S3_PREFIX\": s3_prefix,\n              \
+          \  \"ENABLE_PROFILING\": \"true\" if enable_profiling else \"false\",\n\
+          \                \"VERBOSE\": \"true\" if verbose else \"false\",\n    \
+          \            \"DOC_CATEGORY\": doc_category,\n                \"DOC_SUBCATEGORY\"\
+          : doc_subcategory,\n                \"DOC_DATE\": doc_date,\n          \
+          \  },\n        ),\n        ttl_seconds_after_finished=300,\n    )\n\n  \
+          \  custom_api = k8s_client.CustomObjectsApi(api_client)\n    rayjob_group\
+          \ = \"ray.io\"\n    rayjob_version = \"v1\"\n    rayjob_plural = \"rayjobs\"\
+          \n\n    rayjob_cr = job._build_rayjob_cr()\n    custom_api.create_namespaced_custom_object(\n\
+          \        group=rayjob_group,\n        version=rayjob_version,\n        namespace=namespace,\n\
+          \        plural=rayjob_plural,\n        body=rayjob_cr,\n    )\n    print(f\"\
+          RayJob '{rayjob_name}' submitted via kubernetes API.\")\n\n    if bypass_kueue:\n\
+          \        rayjob_obj = custom_api.get_namespaced_custom_object(\n       \
+          \     group=rayjob_group,\n            version=rayjob_version,\n       \
+          \     namespace=namespace,\n            plural=rayjob_plural,\n        \
+          \    name=rayjob_name,\n        )\n        labels = rayjob_obj.get(\"metadata\"\
+          , {}).get(\"labels\", {})\n        if \"kueue.x-k8s.io/queue-name\" in labels:\n\
+          \            custom_api.patch_namespaced_custom_object(\n              \
+          \  group=rayjob_group,\n                version=rayjob_version,\n      \
+          \          namespace=namespace,\n                plural=rayjob_plural,\n\
+          \                name=rayjob_name,\n                body={\"metadata\":\
+          \ {\"labels\": {\"kueue.x-k8s.io/queue-name\": None}}},\n            )\n\
+          \            print(f\"Removed kueue.x-k8s.io/queue-name label from RayJob\
+          \ '{rayjob_name}'.\")\n\n    # Inject S3 credentials into Ray pods via secretKeyRef\
+          \ so they never\n    # appear as plaintext in the RayJob spec.\n    s3_env_vars\
+          \ = [\n        {\n            \"name\": \"S3_ACCESS_KEY\",\n           \
+          \ \"valueFrom\": {\n                \"secretKeyRef\": {\"name\": s3_secret_name,\
+          \ \"key\": \"access_key\"},\n            },\n        },\n        {\n   \
+          \         \"name\": \"S3_SECRET_KEY\",\n            \"valueFrom\": {\n \
+          \               \"secretKeyRef\": {\"name\": s3_secret_name, \"key\": \"\
+          secret_key\"},\n            },\n        },\n    ]\n    rayjob_obj = custom_api.get_namespaced_custom_object(\n\
+          \        group=rayjob_group,\n        version=rayjob_version,\n        namespace=namespace,\n\
+          \        plural=rayjob_plural,\n        name=rayjob_name,\n    )\n    spec\
+          \ = rayjob_obj.get(\"spec\", {})\n    cluster_spec = spec.get(\"rayClusterSpec\"\
+          , {})\n    head_spec = cluster_spec.get(\"headGroupSpec\", {})\n    head_containers\
+          \ = head_spec.get(\"template\", {}).get(\"spec\", {}).get(\"containers\"\
+          , [])\n    for c in head_containers:\n        c.setdefault(\"env\", []).extend(s3_env_vars)\n\
+          \    worker_groups = cluster_spec.get(\"workerGroupSpecs\", [])\n    for\
+          \ wg in worker_groups:\n        worker_containers = wg.get(\"template\"\
+          , {}).get(\"spec\", {}).get(\"containers\", [])\n        for c in worker_containers:\n\
+          \            c.setdefault(\"env\", []).extend(s3_env_vars)\n    custom_api.patch_namespaced_custom_object(\n\
+          \        group=rayjob_group,\n        version=rayjob_version,\n        namespace=namespace,\n\
+          \        plural=rayjob_plural,\n        name=rayjob_name,\n        body={\"\
+          spec\": {\"rayClusterSpec\": cluster_spec}},\n    )\n    print(f\"Injected\
+          \ S3 credentials from Secret '{s3_secret_name}' into Ray pod templates.\"\
+          )\n\n    if bypass_kueue:\n        custom_api.patch_namespaced_custom_object(\n\
+          \            group=rayjob_group,\n            version=rayjob_version,\n\
+          \            namespace=namespace,\n            plural=rayjob_plural,\n \
+          \           name=rayjob_name,\n            body={\"spec\": {\"suspend\"\
+          : False}},\n        )\n        print(f\"Unsuspended RayJob '{rayjob_name}'\
+          \ - cluster will now start provisioning.\")\n    else:\n        print(f\"\
+          RayJob '{rayjob_name}' waiting for Kueue admission...\")\n\n    # Wait for\
+          \ RayJob completion (checks both cluster readiness and job status)\n   \
+          \ max_wait = 4 * 3600\n    start_time = time.time()\n    print(f\"Waiting\
+          \ for RayJob '{rayjob_name}' to complete (timeout {max_wait}s)...\")\n \
+          \   while True:\n        rayjob_obj = custom_api.get_namespaced_custom_object(\n\
+          \            group=rayjob_group,\n            version=rayjob_version,\n\
+          \            namespace=namespace,\n            plural=rayjob_plural,\n \
+          \           name=rayjob_name,\n        )\n        ray_status = rayjob_obj.get(\"\
+          status\", {})\n        job_status = ray_status.get(\"jobStatus\", \"\")\n\
+          \        deployment_status = ray_status.get(\"jobDeploymentStatus\", \"\"\
+          )\n        cluster_status = ray_status.get(\"rayClusterStatus\", {})\n \
+          \       ready_workers = cluster_status.get(\"readyWorkerReplicas\", 0)\n\
+          \        cluster_state = cluster_status.get(\"state\", \"creating\")\n\n\
+          \        if job_status == \"SUCCEEDED\":\n            print(f\"RayJob completed\
+          \ successfully. Deployment: {deployment_status}\")\n            break\n\
+          \        elif job_status == \"FAILED\":\n            raise RuntimeError(f\"\
+          RayJob '{rayjob_name}' failed. Deployment: {deployment_status}\")\n\n  \
+          \      elapsed = time.time() - start_time\n        if elapsed > max_wait:\n\
+          \            raise TimeoutError(\n                f\"RayJob '{rayjob_name}'\
+          \ did not complete within {max_wait}s. \"\n                f\"Job: {job_status},\
+          \ Deployment: {deployment_status}, \"\n                f\"Workers: {ready_workers}/{num_workers},\
+          \ Cluster: {cluster_state}\"\n            )\n\n        print(\n        \
+          \    f\"  [{elapsed:.0f}s] Job: {job_status or 'pending'}, Deployment: {deployment_status},\
+          \ \"\n            f\"Workers: {ready_workers}/{num_workers}, Cluster: {cluster_state}\"\
+          \n        )\n        time.sleep(15)\n\n    # --- OpenLineage emission (best-effort)\
+          \ ---\n    try:\n        from rhoai_lineage.kfp.lineage import kfp_lineage\n\
+          \        from rhoai_lineage.naming import s3_dataset\n        from urllib.parse\
+          \ import urlparse as _urlparse\n\n        duration_seconds = time.time()\
+          \ - start_time\n        _s3_parsed = _urlparse(s3_endpoint)\n        _s3_host\
+          \ = _s3_parsed.hostname or \"minio\"\n        _s3_port = _s3_parsed.port\
+          \ or 9000\n\n        input_ds = {\n            \"namespace\": f\"pvc://{namespace}\"\
+          ,\n            \"name\": f\"{pvc_name}/{input_path}\",\n        }\n    \
+          \    output_ns, output_name = s3_dataset(\n            bucket=s3_bucket,\
+          \ path=s3_prefix, host=_s3_host, port=_s3_port,\n        )\n        output_ds\
+          \ = {\n            \"namespace\": output_ns,\n            \"name\": output_name,\n\
+          \            \"facets\": {\n                \"custom_metrics\": {\n    \
+          \                \"_producer\": \"https://github.com/rhoai-lineage\",\n\
+          \                    \"_schemaURL\": \"https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/CustomFacet\"\
+          ,\n                    \"num_files\": num_files,\n                    \"\
+          chunk_max_tokens\": chunk_max_tokens,\n                    \"tokenizer\"\
+          : tokenizer,\n                    \"num_workers\": num_workers,\n      \
+          \              \"duration_seconds\": round(duration_seconds, 2),\n     \
+          \           },\n            },\n        }\n\n        ol_run_facets = {}\n\
+          \        _pipeline_run_id = os.environ.get(\"PIPELINE_RUN_ID\", \"\")\n\
+          \        if _pipeline_run_id:\n            ol_run_facets[\"pipelineRunId\"\
+          ] = {\n                \"_producer\": \"rhoai-lineage\",\n             \
+          \   \"_schemaURL\": \"https://openlineage.io/spec/1-0-0/OpenLineage.json\"\
+          ,\n                \"id\": _pipeline_run_id,\n            }\n\n        with\
+          \ kfp_lineage(\n            \"parse_and_chunk\",\n            inputs=[input_ds],\n\
+          \            outputs=[output_ds],\n            run_facets=ol_run_facets,\n\
+          \        ):\n            pass\n        print(\"OpenLineage COMPLETE event\
+          \ emitted for parse_and_chunk\")\n    except Exception as e:\n        print(f\"\
+          WARNING: OpenLineage emission failed (non-fatal): {e}\")\n\n    # --- MLflow\
+          \ tracking via REST API (best-effort) ---\n    # Direct REST calls with\
+          \ SA token auth \u2014 the RHOAI MLflow Operator\n    # requires Authorization\
+          \ + X-Mlflow-Workspace headers that the vanilla\n    # mlflow client doesn't\
+          \ inject from KFP pods.\n    try:\n        import requests as _req\n\n \
+          \       class _MLflowRESTTracker:\n            def __init__(self):\n   \
+          \             self._url = \"https://mlflow.redhat-ods-applications.svc:8443\"\
+          \n                self._headers = {\"Content-Type\": \"application/json\"\
+          }\n                self._run_id = None\n                self._experiment_id\
+          \ = None\n                _sa_token = \"/var/run/secrets/kubernetes.io/serviceaccount/token\"\
+          \n                _sa_ns = \"/var/run/secrets/kubernetes.io/serviceaccount/namespace\"\
+          \n                if os.path.exists(_sa_token):\n                    with\
+          \ open(_sa_token) as f:\n                        self._headers[\"Authorization\"\
+          ] = f\"Bearer {f.read().strip()}\"\n                if os.path.exists(_sa_ns):\n\
+          \                    with open(_sa_ns) as f:\n                        self._headers[\"\
+          X-Mlflow-Workspace\"] = f.read().strip()\n\n            def _post(self,\
+          \ endpoint, data):\n                resp = _req.post(f\"{self._url}{endpoint}\"\
+          , json=data,\n                                 headers=self._headers, verify=False,\
+          \ timeout=10)\n                resp.raise_for_status()\n               \
+          \ return resp.json()\n\n            def create_experiment(self, name):\n\
+          \                try:\n                    result = self._post(\"/api/2.0/mlflow/experiments/create\"\
+          , {\"name\": name})\n                    self._experiment_id = result.get(\"\
+          experiment_id\")\n                except Exception:\n                  \
+          \  resp = _req.get(f\"{self._url}/api/2.0/mlflow/experiments/get-by-name\"\
+          ,\n                                    params={\"experiment_name\": name},\n\
+          \                                    headers=self._headers, verify=False,\
+          \ timeout=10)\n                    if resp.ok:\n                       \
+          \ self._experiment_id = resp.json().get(\"experiment\", {}).get(\"experiment_id\"\
+          )\n                return self._experiment_id\n\n            def start_run(self,\
+          \ run_name=\"\"):\n                if not self._experiment_id:\n       \
+          \             return None\n                result = self._post(\"/api/2.0/mlflow/runs/create\"\
+          , {\n                    \"experiment_id\": self._experiment_id, \"run_name\"\
+          : run_name,\n                })\n                self._run_id = result.get(\"\
+          run\", {}).get(\"info\", {}).get(\"run_id\")\n                return self._run_id\n\
+          \n            def log_param(self, key, value):\n                if not self._run_id:\n\
+          \                    return\n                self._post(\"/api/2.0/mlflow/runs/log-parameter\"\
+          , {\n                    \"run_id\": self._run_id, \"key\": key, \"value\"\
+          : str(value),\n                })\n\n            def log_metric(self, key,\
+          \ value):\n                if not self._run_id:\n                    return\n\
+          \                self._post(\"/api/2.0/mlflow/runs/log-metric\", {\n   \
+          \                 \"run_id\": self._run_id, \"key\": key, \"value\": float(value),\n\
+          \                    \"timestamp\": int(time.time() * 1000),\n         \
+          \       })\n\n            def end_run(self, status=\"FINISHED\"):\n    \
+          \            if not self._run_id:\n                    return\n        \
+          \        self._post(\"/api/2.0/mlflow/runs/update\", {\n               \
+          \     \"run_id\": self._run_id, \"status\": status,\n                  \
+          \  \"end_time\": int(time.time() * 1000),\n                })\n\n      \
+          \  duration_seconds = time.time() - start_time\n        tracker = _MLflowRESTTracker()\n\
+          \        tracker.create_experiment(\"data-strat-ingest\")\n        tracker.start_run(run_name=f\"\
+          parse-{rayjob_name}\")\n        tracker.log_param(\"num_files\", str(num_files))\n\
+          \        tracker.log_param(\"chunk_max_tokens\", str(chunk_max_tokens))\n\
+          \        tracker.log_param(\"tokenizer\", tokenizer)\n        tracker.log_param(\"\
+          num_workers\", str(num_workers))\n        tracker.log_param(\"s3_prefix\"\
+          , s3_prefix)\n        tracker.log_metric(\"duration_seconds\", duration_seconds)\n\
+          \        tracker.end_run()\n        print(\"MLflow: logged parse run to\
+          \ experiment 'data-strat-ingest'\")\n    except Exception as e:\n      \
+          \  print(f\"MLflow tracking failed (non-blocking): {e}\")\n\n    return\
+          \ f\"s3://{s3_bucket}/{s3_prefix}\"\n\n"
+        image: registry.redhat.io/rhoai/odh-pipeline-runtime-datascience-cpu-py312-rhel9@sha256:f9844dc150592a9f196283b3645dda92bd80dfdb3d467fa8725b10267ea5bdbc
+pipelineInfo:
+  description: 'Data-chain-only RAG pipeline: parse & chunk PDFs with Docling (output
+    to S3), then ingest into Milvus with local or remote embeddings. No model deployment
+    steps.'
+  name: rag-ingest-pipeline
+root:
+  dag:
+    tasks:
+      ingest-to-milvus:
+        cachingOptions: {}
+        componentRef:
+          name: comp-ingest-to-milvus
+        dependentTasks:
+        - parse-and-chunk
+        inputs:
+          parameters:
+            collection_name:
+              componentInputParameter: collection_name
+            drop_existing:
+              componentInputParameter: drop_existing
+            embed_batch_size:
+              componentInputParameter: embed_batch_size
+            embedding_dim:
+              componentInputParameter: embedding_dim
+            embedding_endpoint:
+              componentInputParameter: embedding_endpoint
+            embedding_model:
+              componentInputParameter: embedding_model
+            index_type:
+              componentInputParameter: index_type
+            milvus_batch_size:
+              componentInputParameter: milvus_batch_size
+            milvus_db:
+              componentInputParameter: milvus_db
+            milvus_host:
+              componentInputParameter: milvus_host
+            milvus_port:
+              componentInputParameter: milvus_port
+            milvus_token:
+              componentInputParameter: milvus_token
+            pipeline_run_id:
+              componentInputParameter: pipeline_run_id
+            s3_bucket:
+              componentInputParameter: s3_bucket
+            s3_endpoint:
+              componentInputParameter: s3_endpoint
+            s3_prefix:
+              componentInputParameter: s3_prefix
+        taskInfo:
+          name: ingest-to-milvus
+      parse-and-chunk:
+        cachingOptions: {}
+        componentRef:
+          name: comp-parse-and-chunk
+        inputs:
+          parameters:
+            batch_size:
+              componentInputParameter: batch_size
+            bypass_kueue:
+              componentInputParameter: bypass_kueue
+            chunk_max_tokens:
+              componentInputParameter: chunk_max_tokens
+            cpus_per_actor:
+              componentInputParameter: cpus_per_actor
+            doc_category:
+              componentInputParameter: doc_category
+            doc_date:
+              componentInputParameter: doc_date
+            doc_subcategory:
+              componentInputParameter: doc_subcategory
+            enable_profiling:
+              componentInputParameter: enable_profiling
+            head_cpus:
+              componentInputParameter: head_cpus
+            head_memory_gb:
+              componentInputParameter: head_memory_gb
+            input_path:
+              componentInputParameter: input_path
+            max_actors:
+              componentInputParameter: max_actors
+            min_actors:
+              componentInputParameter: min_actors
+            namespace:
+              componentInputParameter: namespace
+            num_files:
+              componentInputParameter: num_files
+            num_workers:
+              componentInputParameter: num_workers
+            pvc_mount_path:
+              componentInputParameter: pvc_mount_path
+            pvc_name:
+              componentInputParameter: pvc_name
+            ray_image:
+              componentInputParameter: ray_image
+            s3_bucket:
+              componentInputParameter: s3_bucket
+            s3_endpoint:
+              componentInputParameter: s3_endpoint
+            s3_prefix:
+              componentInputParameter: s3_prefix
+            s3_secret_name:
+              componentInputParameter: s3_secret_name
+            timeout_seconds:
+              componentInputParameter: timeout_seconds
+            tokenizer:
+              componentInputParameter: embedding_model
+            verbose:
+              componentInputParameter: verbose
+            worker_cpus:
+              componentInputParameter: worker_cpus
+            worker_memory_gb:
+              componentInputParameter: worker_memory_gb
+        taskInfo:
+          name: parse-and-chunk
+  inputDefinitions:
+    parameters:
+      batch_size:
+        defaultValue: 4.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      bypass_kueue:
+        defaultValue: false
+        isOptional: true
+        parameterType: BOOLEAN
+      chunk_max_tokens:
+        defaultValue: 256.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      collection_name:
+        defaultValue: rag_documents
+        isOptional: true
+        parameterType: STRING
+      cpus_per_actor:
+        defaultValue: 4.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      doc_category:
+        defaultValue: ''
+        isOptional: true
+        parameterType: STRING
+      doc_date:
+        defaultValue: ''
+        isOptional: true
+        parameterType: STRING
+      doc_subcategory:
+        defaultValue: ''
+        isOptional: true
+        parameterType: STRING
+      drop_existing:
+        defaultValue: true
+        isOptional: true
+        parameterType: BOOLEAN
+      embed_batch_size:
+        defaultValue: 64.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      embedding_dim:
+        defaultValue: 768.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      embedding_endpoint:
+        defaultValue: ''
+        isOptional: true
+        parameterType: STRING
+      embedding_model:
+        defaultValue: ibm-granite/granite-embedding-125m-english
+        isOptional: true
+        parameterType: STRING
+      enable_profiling:
+        defaultValue: false
+        isOptional: true
+        parameterType: BOOLEAN
+      head_cpus:
+        defaultValue: 2.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      head_memory_gb:
+        defaultValue: 8.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      index_type:
+        defaultValue: HNSW
+        isOptional: true
+        parameterType: STRING
+      input_path:
+        defaultValue: input/pdfs
+        isOptional: true
+        parameterType: STRING
+      max_actors:
+        defaultValue: 4.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      milvus_batch_size:
+        defaultValue: 256.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      milvus_db:
+        defaultValue: default
+        isOptional: true
+        parameterType: STRING
+      milvus_host:
+        defaultValue: milvus-milvus.milvus.svc.cluster.local
+        isOptional: true
+        parameterType: STRING
+      milvus_port:
+        defaultValue: 19530.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      milvus_token:
+        defaultValue: ''
+        isOptional: true
+        parameterType: STRING
+      min_actors:
+        defaultValue: 2.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      namespace:
+        defaultValue: ray-docling
+        isOptional: true
+        parameterType: STRING
+      num_files:
+        defaultValue: 1000.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      num_workers:
+        defaultValue: 2.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      pipeline_run_id:
+        defaultValue: ''
+        isOptional: true
+        parameterType: STRING
+      pvc_mount_path:
+        defaultValue: /mnt/data
+        isOptional: true
+        parameterType: STRING
+      pvc_name:
+        defaultValue: data-pvc
+        isOptional: true
+        parameterType: STRING
+      ray_image:
+        defaultValue: quay.io/rhoai-szaher/docling-ray:latest
+        isOptional: true
+        parameterType: STRING
+      s3_bucket:
+        defaultValue: rag-chunks
+        isOptional: true
+        parameterType: STRING
+      s3_endpoint:
+        defaultValue: http://minio-service.default.svc.cluster.local:9000
+        isOptional: true
+        parameterType: STRING
+      s3_prefix:
+        defaultValue: chunks
+        isOptional: true
+        parameterType: STRING
+      s3_secret_name:
+        defaultValue: minio-secret
+        isOptional: true
+        parameterType: STRING
+      timeout_seconds:
+        defaultValue: 600.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      verbose:
+        defaultValue: true
+        isOptional: true
+        parameterType: BOOLEAN
+      worker_cpus:
+        defaultValue: 8.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      worker_memory_gb:
+        defaultValue: 16.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.16.1
+---
+platforms:
+  kubernetes:
+    deploymentSpec:
+      executors:
+        exec-ingest-to-milvus:
+          configMapAsEnv:
+          - configMapName: data-strat-lineage-config
+            configMapNameParameter:
+              runtimeValue:
+                constant: data-strat-lineage-config
+            keyToEnv:
+            - configMapKey: OPENLINEAGE_URL
+              envVar: OPENLINEAGE_URL
+            - configMapKey: MLFLOW_BRIDGE_ENABLED
+              envVar: MLFLOW_BRIDGE_ENABLED
+            optional: false
+          secretAsEnv:
+          - keyToEnv:
+            - envVar: S3_ACCESS_KEY
+              secretKey: access_key
+            - envVar: S3_SECRET_KEY
+              secretKey: secret_key
+            optional: false
+            secretNameParameter:
+              componentInputParameter: s3_secret_name
+        exec-parse-and-chunk:
+          configMapAsEnv:
+          - configMapName: data-strat-lineage-config
+            configMapNameParameter:
+              runtimeValue:
+                constant: data-strat-lineage-config
+            keyToEnv:
+            - configMapKey: OPENLINEAGE_URL
+              envVar: OPENLINEAGE_URL
+            - configMapKey: MLFLOW_BRIDGE_ENABLED
+              envVar: MLFLOW_BRIDGE_ENABLED
+            optional: false
