@@ -845,7 +845,7 @@ def parse_and_chunk(
         }
 
         ol_run_facets = {}
-        _pipeline_run_id = os.environ.get("PIPELINE_RUN_ID", "")
+        _pipeline_run_id = pipeline_run_id or os.environ.get("PIPELINE_RUN_ID", "")
         if _pipeline_run_id:
             ol_run_facets["pipelineRunId"] = {
                 "_producer": "rhoai-lineage",
