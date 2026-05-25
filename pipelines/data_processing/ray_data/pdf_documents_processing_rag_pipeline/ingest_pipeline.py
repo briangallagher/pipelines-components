@@ -107,7 +107,6 @@ def rag_ingest_pipeline(
         config_map_name="data-strat-lineage-config",
         config_map_key_to_env={
             "OPENLINEAGE_URL": "OPENLINEAGE_URL",
-            "OPENLINEAGE_NAMESPACE": "OPENLINEAGE_NAMESPACE",
             "MLFLOW_BRIDGE_ENABLED": "MLFLOW_BRIDGE_ENABLED",
         },
     )
@@ -146,7 +145,6 @@ def rag_ingest_pipeline(
         config_map_name="data-strat-lineage-config",
         config_map_key_to_env={
             "OPENLINEAGE_URL": "OPENLINEAGE_URL",
-            "OPENLINEAGE_NAMESPACE": "OPENLINEAGE_NAMESPACE",
             "MLFLOW_BRIDGE_ENABLED": "MLFLOW_BRIDGE_ENABLED",
         },
     )
