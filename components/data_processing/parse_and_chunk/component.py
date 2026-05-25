@@ -14,6 +14,8 @@ from kfp_components.utils.consts import RAY_RAG_BASE_IMAGE  # pyright: ignore[re
     packages_to_install=[
         "codeflare-sdk==0.35.0",
         "kubernetes>=28.1.0",
+        "rhoai-lineage @ git+https://github.com/briangallagher/rhoai-lineage.git",
+        "mlflow>=2.0.0",
     ],
 )
 def parse_and_chunk(
@@ -806,6 +808,89 @@ def parse_and_chunk(
             f"Workers: {ready_workers}/{num_workers}, Cluster: {cluster_state}"
         )
         time.sleep(15)
+
+    # --- OpenLineage emission (best-effort) ---
+    try:
+        from rhoai_lineage.kfp.lineage import kfp_lineage
+        from rhoai_lineage.naming import s3_dataset
+        from urllib.parse import urlparse as _urlparse
+
+        duration_seconds = time.time() - start_time
+        _s3_parsed = _urlparse(s3_endpoint)
+        _s3_host = _s3_parsed.hostname or "minio"
+        _s3_port = _s3_parsed.port or 9000
+
+        input_ds = {
+            "namespace": f"pvc://{namespace}",
+            "name": f"{pvc_name}/{input_path}",
+        }
+        output_ns, output_name = s3_dataset(
+            bucket=s3_bucket, path=s3_prefix, host=_s3_host, port=_s3_port,
+        )
+        output_ds = {
+            "namespace": output_ns,
+            "name": output_name,
+            "facets": {
+                "custom_metrics": {
+                    "_producer": "https://github.com/rhoai-lineage",
+                    "_schemaURL": "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/CustomFacet",
+                    "num_files": num_files,
+                    "chunk_max_tokens": chunk_max_tokens,
+                    "tokenizer": tokenizer,
+                    "num_workers": num_workers,
+                    "duration_seconds": round(duration_seconds, 2),
+                },
+            },
+        }
+
+        with kfp_lineage(
+            "parse_and_chunk",
+            inputs=[input_ds],
+            outputs=[output_ds],
+        ):
+            pass
+        print("OpenLineage COMPLETE event emitted for parse_and_chunk")
+    except Exception as e:
+        print(f"WARNING: OpenLineage emission failed (non-fatal): {e}")
+
+    # --- MLflow tracking (best-effort) ---
+    try:
+        import mlflow
+
+        sa_token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        if os.path.exists(sa_token_path):
+            with open(sa_token_path) as f:
+                sa_token = f.read().strip()
+            os.environ["MLFLOW_TRACKING_TOKEN"] = sa_token
+        os.environ["MLFLOW_TRACKING_INSECURE_TLS"] = "true"
+
+        mlflow_uri = os.environ.get(
+            "MLFLOW_TRACKING_URI",
+            "https://mlflow.redhat-ods-applications.svc:8443",
+        )
+        mlflow.set_tracking_uri(mlflow_uri)
+        mlflow.set_experiment(
+            os.environ.get("OPENLINEAGE_NAMESPACE", "data-strat-poc")
+        )
+
+        duration_seconds = time.time() - start_time
+        with mlflow.start_run(run_name="parse_and_chunk"):
+            mlflow.log_params({
+                "num_files": str(num_files),
+                "chunk_max_tokens": str(chunk_max_tokens),
+                "embedding_model": tokenizer,
+                "num_workers": str(num_workers),
+                "s3_bucket": s3_bucket,
+                "s3_prefix": s3_prefix,
+                "ray_image": ray_image,
+                "namespace": namespace,
+            })
+            mlflow.log_metrics({
+                "duration_seconds": round(duration_seconds, 2),
+            })
+        print("MLflow run logged for parse_and_chunk")
+    except Exception as e:
+        print(f"WARNING: MLflow tracking failed (non-fatal): {e}")
 
     return f"s3://{s3_bucket}/{s3_prefix}"
 

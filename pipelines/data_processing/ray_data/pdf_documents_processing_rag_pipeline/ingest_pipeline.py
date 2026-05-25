@@ -102,6 +102,15 @@ def rag_ingest_pipeline(
         doc_date=doc_date,
     )
     chunk_task.set_caching_options(False)
+    kubernetes.use_config_map_as_env(
+        chunk_task,
+        config_map_name="data-strat-lineage-config",
+        config_map_key_to_env={
+            "OPENLINEAGE_URL": "OPENLINEAGE_URL",
+            "OPENLINEAGE_NAMESPACE": "OPENLINEAGE_NAMESPACE",
+            "MLFLOW_BRIDGE_ENABLED": "MLFLOW_BRIDGE_ENABLED",
+        },
+    )
 
     # Step 2: Ingest into Milvus (embed locally or via pre-existing endpoint)
     ingest_task = ingest_to_milvus(
@@ -132,6 +141,15 @@ def rag_ingest_pipeline(
     )
     ingest_task.after(chunk_task)
     ingest_task.set_caching_options(False)
+    kubernetes.use_config_map_as_env(
+        ingest_task,
+        config_map_name="data-strat-lineage-config",
+        config_map_key_to_env={
+            "OPENLINEAGE_URL": "OPENLINEAGE_URL",
+            "OPENLINEAGE_NAMESPACE": "OPENLINEAGE_NAMESPACE",
+            "MLFLOW_BRIDGE_ENABLED": "MLFLOW_BRIDGE_ENABLED",
+        },
+    )
 
 
 if __name__ == "__main__":

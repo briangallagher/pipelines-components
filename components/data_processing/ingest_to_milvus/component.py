@@ -16,6 +16,8 @@ from kfp_components.utils.consts import RAY_RAG_BASE_IMAGE  # pyright: ignore[re
         "sentence-transformers>=2.2.0",
         "requests>=2.28.0",
         "boto3>=1.28.0",
+        "rhoai-lineage @ git+https://github.com/briangallagher/rhoai-lineage.git",
+        "mlflow>=2.0.0",
     ],
 )
 def ingest_to_milvus(
@@ -246,6 +248,90 @@ def ingest_to_milvus(
     wall_clock = time.time() - start_time
     print(f"\nIngestion complete: {total_inserted} vectors in {wall_clock:.1f}s")
     print(f"Collection stats: {stats}")
+
+    # --- OpenLineage emission (best-effort) ---
+    try:
+        from rhoai_lineage.kfp.lineage import kfp_lineage
+        from rhoai_lineage.naming import s3_dataset, milvus_dataset
+        from urllib.parse import urlparse as _urlparse
+
+        _s3_parsed = _urlparse(s3_endpoint)
+        _s3_host = _s3_parsed.hostname or "minio"
+        _s3_port = _s3_parsed.port or 9000
+
+        input_ns, input_name = s3_dataset(
+            bucket=s3_bucket, path=s3_prefix, host=_s3_host, port=_s3_port,
+        )
+        input_ds = {"namespace": input_ns, "name": input_name}
+
+        output_ns, output_name = milvus_dataset(
+            collection=collection_name, host=milvus_host, port=milvus_port,
+        )
+        output_ds = {
+            "namespace": output_ns,
+            "name": output_name,
+            "facets": {
+                "custom_metrics": {
+                    "_producer": "https://github.com/rhoai-lineage",
+                    "_schemaURL": "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/CustomFacet",
+                    "vectors_inserted": total_inserted,
+                    "embedding_model": embedding_model,
+                    "embedding_dim": embedding_dim,
+                    "collection_name": collection_name,
+                    "index_type": index_type,
+                    "duration_seconds": round(wall_clock, 2),
+                },
+            },
+        }
+
+        with kfp_lineage(
+            "ingest_to_milvus",
+            inputs=[input_ds],
+            outputs=[output_ds],
+        ):
+            pass
+        print("OpenLineage COMPLETE event emitted for ingest_to_milvus")
+    except Exception as e:
+        print(f"WARNING: OpenLineage emission failed (non-fatal): {e}")
+
+    # --- MLflow tracking (best-effort) ---
+    try:
+        import mlflow
+
+        sa_token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        if os.path.exists(sa_token_path):
+            with open(sa_token_path) as f:
+                sa_token = f.read().strip()
+            os.environ["MLFLOW_TRACKING_TOKEN"] = sa_token
+        os.environ["MLFLOW_TRACKING_INSECURE_TLS"] = "true"
+
+        mlflow_uri = os.environ.get(
+            "MLFLOW_TRACKING_URI",
+            "https://mlflow.redhat-ods-applications.svc:8443",
+        )
+        mlflow.set_tracking_uri(mlflow_uri)
+        mlflow.set_experiment(
+            os.environ.get("OPENLINEAGE_NAMESPACE", "data-strat-poc")
+        )
+
+        with mlflow.start_run(run_name="ingest_to_milvus"):
+            mlflow.log_params({
+                "collection_name": collection_name,
+                "embedding_model": embedding_model,
+                "embedding_dim": str(embedding_dim),
+                "milvus_host": milvus_host,
+                "index_type": index_type,
+                "pipeline_run_id": pipeline_run_id or "unknown",
+                "drop_existing": str(drop_existing),
+            })
+            mlflow.log_metrics({
+                "vectors_inserted": float(total_inserted),
+                "duration_seconds": round(wall_clock, 2),
+                "source_files": float(file_count),
+            })
+        print("MLflow run logged for ingest_to_milvus")
+    except Exception as e:
+        print(f"WARNING: MLflow tracking failed (non-fatal): {e}")
 
     return f"{collection_name}:{total_inserted}"
 
