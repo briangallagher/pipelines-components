@@ -306,16 +306,27 @@ def ingest_to_milvus(
     # --- MLflow tracking (best-effort) ---
     try:
         import mlflow
+        import mlflow.utils.rest_utils as _mlflow_rest
 
         sa_token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
         sa_ns_path = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+        _mlflow_workspace = ""
         if os.path.exists(sa_token_path):
             with open(sa_token_path) as f:
                 os.environ["MLFLOW_TRACKING_TOKEN"] = f.read().strip()
             if os.path.exists(sa_ns_path):
                 with open(sa_ns_path) as f:
-                    os.environ["MLFLOW_TRACKING_WORKSPACE"] = f.read().strip()
+                    _mlflow_workspace = f.read().strip()
         os.environ["MLFLOW_TRACKING_INSECURE_TLS"] = "true"
+
+        if _mlflow_workspace:
+            _orig_http_request = _mlflow_rest.http_request
+            def _workspace_http_request(*args, **kwargs):
+                eh = kwargs.get("extra_headers") or {}
+                eh["X-Mlflow-Workspace"] = _mlflow_workspace
+                kwargs["extra_headers"] = eh
+                return _orig_http_request(*args, **kwargs)
+            _mlflow_rest.http_request = _workspace_http_request
 
         mlflow_uri = os.environ.get(
             "MLFLOW_TRACKING_URI",
