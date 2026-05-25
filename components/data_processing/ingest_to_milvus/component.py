@@ -284,10 +284,19 @@ def ingest_to_milvus(
             },
         }
 
+        ol_run_facets = {}
+        if pipeline_run_id:
+            ol_run_facets["pipelineRunId"] = {
+                "_producer": "rhoai-lineage",
+                "_schemaURL": "https://openlineage.io/spec/1-0-0/OpenLineage.json",
+                "id": pipeline_run_id,
+            }
+
         with kfp_lineage(
             "ingest_to_milvus",
             inputs=[input_ds],
             outputs=[output_ds],
+            run_facets=ol_run_facets,
         ):
             pass
         print("OpenLineage COMPLETE event emitted for ingest_to_milvus")
@@ -299,10 +308,13 @@ def ingest_to_milvus(
         import mlflow
 
         sa_token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        sa_ns_path = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
         if os.path.exists(sa_token_path):
             with open(sa_token_path) as f:
-                sa_token = f.read().strip()
-            os.environ["MLFLOW_TRACKING_TOKEN"] = sa_token
+                os.environ["MLFLOW_TRACKING_TOKEN"] = f.read().strip()
+            if os.path.exists(sa_ns_path):
+                with open(sa_ns_path) as f:
+                    os.environ["MLFLOW_TRACKING_WORKSPACE"] = f.read().strip()
         os.environ["MLFLOW_TRACKING_INSECURE_TLS"] = "true"
 
         mlflow_uri = os.environ.get(
