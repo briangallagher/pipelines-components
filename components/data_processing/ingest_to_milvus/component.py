@@ -17,7 +17,6 @@ from kfp_components.utils.consts import RAY_RAG_BASE_IMAGE  # pyright: ignore[re
         "requests>=2.28.0",
         "boto3>=1.28.0",
         "rhoai-lineage @ git+https://github.com/briangallagher/rhoai-lineage.git",
-        "mlflow>=2.0.0",
     ],
 )
 def ingest_to_milvus(
@@ -303,58 +302,92 @@ def ingest_to_milvus(
     except Exception as e:
         print(f"WARNING: OpenLineage emission failed (non-fatal): {e}")
 
-    # --- MLflow tracking (best-effort) ---
+    # --- MLflow tracking via REST API (best-effort) ---
+    # Direct REST calls with SA token auth — the RHOAI MLflow Operator
+    # requires Authorization + X-Mlflow-Workspace headers that the vanilla
+    # mlflow client doesn't inject from KFP pods.
     try:
-        import mlflow
-        import mlflow.utils.rest_utils as _mlflow_rest
+        class _MLflowRESTTracker:
+            def __init__(self):
+                self._url = "https://mlflow.redhat-ods-applications.svc:8443"
+                self._headers = {"Content-Type": "application/json"}
+                self._run_id = None
+                self._experiment_id = None
+                _sa_token = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+                _sa_ns = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+                if os.path.exists(_sa_token):
+                    with open(_sa_token) as f:
+                        self._headers["Authorization"] = f"Bearer {f.read().strip()}"
+                if os.path.exists(_sa_ns):
+                    with open(_sa_ns) as f:
+                        self._headers["X-Mlflow-Workspace"] = f.read().strip()
 
-        sa_token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
-        sa_ns_path = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
-        _mlflow_workspace = ""
-        if os.path.exists(sa_token_path):
-            with open(sa_token_path) as f:
-                os.environ["MLFLOW_TRACKING_TOKEN"] = f.read().strip()
-            if os.path.exists(sa_ns_path):
-                with open(sa_ns_path) as f:
-                    _mlflow_workspace = f.read().strip()
-        os.environ["MLFLOW_TRACKING_INSECURE_TLS"] = "true"
+            def _post(self, endpoint, data):
+                resp = req_lib.post(f"{self._url}{endpoint}", json=data,
+                                    headers=self._headers, verify=False, timeout=10)
+                resp.raise_for_status()
+                return resp.json()
 
-        if _mlflow_workspace:
-            _orig_http_request = _mlflow_rest.http_request
-            def _workspace_http_request(*args, **kwargs):
-                eh = kwargs.get("extra_headers") or {}
-                eh["X-Mlflow-Workspace"] = _mlflow_workspace
-                kwargs["extra_headers"] = eh
-                return _orig_http_request(*args, **kwargs)
-            _mlflow_rest.http_request = _workspace_http_request
+            def create_experiment(self, name):
+                try:
+                    result = self._post("/api/2.0/mlflow/experiments/create", {"name": name})
+                    self._experiment_id = result.get("experiment_id")
+                except Exception:
+                    resp = req_lib.get(f"{self._url}/api/2.0/mlflow/experiments/get-by-name",
+                                       params={"experiment_name": name},
+                                       headers=self._headers, verify=False, timeout=10)
+                    if resp.ok:
+                        self._experiment_id = resp.json().get("experiment", {}).get("experiment_id")
+                return self._experiment_id
 
-        mlflow_uri = os.environ.get(
-            "MLFLOW_TRACKING_URI",
-            "https://mlflow.redhat-ods-applications.svc:8443",
-        )
-        mlflow.set_tracking_uri(mlflow_uri)
-        mlflow.set_experiment(
-            os.environ.get("OPENLINEAGE_NAMESPACE", "data-strat-poc")
-        )
+            def start_run(self, run_name=""):
+                if not self._experiment_id:
+                    return None
+                result = self._post("/api/2.0/mlflow/runs/create", {
+                    "experiment_id": self._experiment_id, "run_name": run_name,
+                })
+                self._run_id = result.get("run", {}).get("info", {}).get("run_id")
+                return self._run_id
 
-        with mlflow.start_run(run_name="ingest_to_milvus"):
-            mlflow.log_params({
-                "collection_name": collection_name,
-                "embedding_model": embedding_model,
-                "embedding_dim": str(embedding_dim),
-                "milvus_host": milvus_host,
-                "index_type": index_type,
-                "pipeline_run_id": pipeline_run_id or "unknown",
-                "drop_existing": str(drop_existing),
-            })
-            mlflow.log_metrics({
-                "vectors_inserted": float(total_inserted),
-                "duration_seconds": round(wall_clock, 2),
-                "source_files": float(file_count),
-            })
-        print("MLflow run logged for ingest_to_milvus")
+            def log_param(self, key, value):
+                if not self._run_id:
+                    return
+                self._post("/api/2.0/mlflow/runs/log-parameter", {
+                    "run_id": self._run_id, "key": key, "value": str(value),
+                })
+
+            def log_metric(self, key, value):
+                if not self._run_id:
+                    return
+                self._post("/api/2.0/mlflow/runs/log-metric", {
+                    "run_id": self._run_id, "key": key, "value": float(value),
+                    "timestamp": int(time.time() * 1000),
+                })
+
+            def end_run(self, status="FINISHED"):
+                if not self._run_id:
+                    return
+                self._post("/api/2.0/mlflow/runs/update", {
+                    "run_id": self._run_id, "status": status,
+                    "end_time": int(time.time() * 1000),
+                })
+
+        tracker = _MLflowRESTTracker()
+        tracker.create_experiment("data-strat-ingest")
+        tracker.start_run(run_name=f"ingest-{collection_name}")
+        tracker.log_param("collection_name", collection_name)
+        tracker.log_param("embedding_model", embedding_model)
+        tracker.log_param("embedding_dim", str(embedding_dim))
+        tracker.log_param("index_type", index_type)
+        tracker.log_param("pipeline_run_id", pipeline_run_id)
+        tracker.log_param("milvus_host", milvus_host)
+        tracker.log_metric("vectors_inserted", float(total_inserted))
+        tracker.log_metric("duration_seconds", wall_clock)
+        tracker.log_metric("source_files", float(file_count))
+        tracker.end_run()
+        print("MLflow: logged ingest run to experiment 'data-strat-ingest'")
     except Exception as e:
-        print(f"WARNING: MLflow tracking failed (non-fatal): {e}")
+        print(f"MLflow tracking failed (non-blocking): {e}")
 
     return f"{collection_name}:{total_inserted}"
 

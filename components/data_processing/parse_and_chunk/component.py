@@ -15,7 +15,7 @@ from kfp_components.utils.consts import RAY_RAG_BASE_IMAGE  # pyright: ignore[re
         "codeflare-sdk==0.35.0",
         "kubernetes>=28.1.0",
         "rhoai-lineage @ git+https://github.com/briangallagher/rhoai-lineage.git",
-        "mlflow>=2.0.0",
+        "requests>=2.28.0",
     ],
 )
 def parse_and_chunk(
@@ -863,61 +863,92 @@ def parse_and_chunk(
     except Exception as e:
         print(f"WARNING: OpenLineage emission failed (non-fatal): {e}")
 
-    # --- MLflow tracking (best-effort) ---
+    # --- MLflow tracking via REST API (best-effort) ---
+    # Direct REST calls with SA token auth — the RHOAI MLflow Operator
+    # requires Authorization + X-Mlflow-Workspace headers that the vanilla
+    # mlflow client doesn't inject from KFP pods.
     try:
-        import mlflow
-        import mlflow.utils.rest_utils as _mlflow_rest
+        import requests as _req
 
-        sa_token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
-        sa_ns_path = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
-        _mlflow_workspace = ""
-        if os.path.exists(sa_token_path):
-            with open(sa_token_path) as f:
-                os.environ["MLFLOW_TRACKING_TOKEN"] = f.read().strip()
-            if os.path.exists(sa_ns_path):
-                with open(sa_ns_path) as f:
-                    _mlflow_workspace = f.read().strip()
-        os.environ["MLFLOW_TRACKING_INSECURE_TLS"] = "true"
+        class _MLflowRESTTracker:
+            def __init__(self):
+                self._url = "https://mlflow.redhat-ods-applications.svc:8443"
+                self._headers = {"Content-Type": "application/json"}
+                self._run_id = None
+                self._experiment_id = None
+                _sa_token = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+                _sa_ns = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+                if os.path.exists(_sa_token):
+                    with open(_sa_token) as f:
+                        self._headers["Authorization"] = f"Bearer {f.read().strip()}"
+                if os.path.exists(_sa_ns):
+                    with open(_sa_ns) as f:
+                        self._headers["X-Mlflow-Workspace"] = f.read().strip()
 
-        # The RHOAI MLflow Operator requires X-Mlflow-Workspace on every
-        # request.  The vanilla client doesn't support this header, so we
-        # patch http_request to inject it.
-        if _mlflow_workspace:
-            _orig_http_request = _mlflow_rest.http_request
-            def _workspace_http_request(*args, **kwargs):
-                eh = kwargs.get("extra_headers") or {}
-                eh["X-Mlflow-Workspace"] = _mlflow_workspace
-                kwargs["extra_headers"] = eh
-                return _orig_http_request(*args, **kwargs)
-            _mlflow_rest.http_request = _workspace_http_request
+            def _post(self, endpoint, data):
+                resp = _req.post(f"{self._url}{endpoint}", json=data,
+                                 headers=self._headers, verify=False, timeout=10)
+                resp.raise_for_status()
+                return resp.json()
 
-        mlflow_uri = os.environ.get(
-            "MLFLOW_TRACKING_URI",
-            "https://mlflow.redhat-ods-applications.svc:8443",
-        )
-        mlflow.set_tracking_uri(mlflow_uri)
-        mlflow.set_experiment(
-            os.environ.get("OPENLINEAGE_NAMESPACE", "data-strat-poc")
-        )
+            def create_experiment(self, name):
+                try:
+                    result = self._post("/api/2.0/mlflow/experiments/create", {"name": name})
+                    self._experiment_id = result.get("experiment_id")
+                except Exception:
+                    resp = _req.get(f"{self._url}/api/2.0/mlflow/experiments/get-by-name",
+                                    params={"experiment_name": name},
+                                    headers=self._headers, verify=False, timeout=10)
+                    if resp.ok:
+                        self._experiment_id = resp.json().get("experiment", {}).get("experiment_id")
+                return self._experiment_id
+
+            def start_run(self, run_name=""):
+                if not self._experiment_id:
+                    return None
+                result = self._post("/api/2.0/mlflow/runs/create", {
+                    "experiment_id": self._experiment_id, "run_name": run_name,
+                })
+                self._run_id = result.get("run", {}).get("info", {}).get("run_id")
+                return self._run_id
+
+            def log_param(self, key, value):
+                if not self._run_id:
+                    return
+                self._post("/api/2.0/mlflow/runs/log-parameter", {
+                    "run_id": self._run_id, "key": key, "value": str(value),
+                })
+
+            def log_metric(self, key, value):
+                if not self._run_id:
+                    return
+                self._post("/api/2.0/mlflow/runs/log-metric", {
+                    "run_id": self._run_id, "key": key, "value": float(value),
+                    "timestamp": int(time.time() * 1000),
+                })
+
+            def end_run(self, status="FINISHED"):
+                if not self._run_id:
+                    return
+                self._post("/api/2.0/mlflow/runs/update", {
+                    "run_id": self._run_id, "status": status,
+                    "end_time": int(time.time() * 1000),
+                })
 
         duration_seconds = time.time() - start_time
-        with mlflow.start_run(run_name="parse_and_chunk"):
-            mlflow.log_params({
-                "num_files": str(num_files),
-                "chunk_max_tokens": str(chunk_max_tokens),
-                "embedding_model": tokenizer,
-                "num_workers": str(num_workers),
-                "s3_bucket": s3_bucket,
-                "s3_prefix": s3_prefix,
-                "ray_image": ray_image,
-                "namespace": namespace,
-            })
-            mlflow.log_metrics({
-                "duration_seconds": round(duration_seconds, 2),
-            })
-        print("MLflow run logged for parse_and_chunk")
+        tracker = _MLflowRESTTracker()
+        tracker.create_experiment("data-strat-ingest")
+        tracker.start_run(run_name=f"parse-{rayjob_name}")
+        tracker.log_param("num_files", str(num_files))
+        tracker.log_param("chunk_max_tokens", str(chunk_max_tokens))
+        tracker.log_param("tokenizer", tokenizer)
+        tracker.log_param("num_workers", str(num_workers))
+        tracker.log_param("s3_prefix", s3_prefix)
+        tracker.log_metric("duration_seconds", duration_seconds)
+        tracker.end_run()
+        print("MLflow: logged parse run to experiment 'data-strat-ingest'")
     except Exception as e:
-        print(f"WARNING: MLflow tracking failed (non-fatal): {e}")
+        print(f"MLflow tracking failed (non-blocking): {e}")
 
     return f"s3://{s3_bucket}/{s3_prefix}"
 
