@@ -87,11 +87,12 @@ def rag_multistep_pipeline(
     drop_existing: bool = True,
     embed_batch_size: int = 64,
     milvus_batch_size: int = 256,
-    # Scenario B metadata
+    # Traceability and metadata
     pipeline_run_id: str = "",
-    doc_lob: str = "",
-    doc_type: str = "",
-    doc_effective_date: str = "",
+    doc_category: str = "",
+    doc_subcategory: str = "",
+    doc_date: str = "",
+    index_type: str = "HNSW",
     # LLM deployment
     hf_secret_name: str = "hf-token-secret",
     llm_model_name: str = "mistralai/Mistral-7B-Instruct-v0.3",
@@ -202,9 +203,9 @@ def rag_multistep_pipeline(
         enable_profiling=enable_profiling,
         verbose=verbose,
         bypass_kueue=bypass_kueue,
-        doc_lob=doc_lob,
-        doc_type=doc_type,
-        doc_effective_date=doc_effective_date,
+        doc_category=doc_category,
+        doc_subcategory=doc_subcategory,
+        doc_date=doc_date,
     )
     chunk_task.set_caching_options(False)
 
@@ -247,6 +248,7 @@ def rag_multistep_pipeline(
             embed_batch_size=embed_batch_size,
             milvus_batch_size=milvus_batch_size,
             pipeline_run_id=pipeline_run_id,
+            index_type=index_type,
         )
         kubernetes.use_secret_as_env(
             ingest_with_service,
@@ -275,6 +277,7 @@ def rag_multistep_pipeline(
             embed_batch_size=embed_batch_size,
             milvus_batch_size=milvus_batch_size,
             pipeline_run_id=pipeline_run_id,
+            index_type=index_type,
         )
         kubernetes.use_secret_as_env(
             ingest_task,

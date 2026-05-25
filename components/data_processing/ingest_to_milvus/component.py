@@ -34,6 +34,7 @@ def ingest_to_milvus(
     embed_batch_size: int = 64,
     milvus_batch_size: int = 256,
     pipeline_run_id: str = "",
+    index_type: str = "HNSW",
 ) -> str:
     """Read chunks from S3, embed, and insert into Milvus.
 
@@ -122,28 +123,38 @@ def ingest_to_milvus(
                 FieldSchema(name="pipeline_run_id", dtype=DataType.VARCHAR, max_length=64),
                 FieldSchema(name="chunk_index", dtype=DataType.INT64),
                 FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=32768),
-                FieldSchema(name="lob", dtype=DataType.VARCHAR, max_length=128),
-                FieldSchema(name="doc_type", dtype=DataType.VARCHAR, max_length=128),
-                FieldSchema(name="effective_date", dtype=DataType.VARCHAR, max_length=32),
+                FieldSchema(name="category", dtype=DataType.VARCHAR, max_length=128),
+                FieldSchema(name="subcategory", dtype=DataType.VARCHAR, max_length=128),
+                FieldSchema(name="document_date", dtype=DataType.VARCHAR, max_length=32),
                 FieldSchema(
                     name="embedding",
                     dtype=DataType.FLOAT_VECTOR,
                     dim=embedding_dim,
                 ),
             ],
-            description="Scenario B: P&C document chunks with lineage metadata",
+            description="RAG document chunks with traceability and metadata",
         )
         client.create_collection(collection_name=collection_name, schema=schema)
 
         index_params = client.prepare_index_params()
-        index_params.add_index(
-            field_name="embedding",
-            index_type="HNSW",
-            metric_type="COSINE",
-            params={"M": 16, "efConstruction": 256},
-        )
+        if index_type == "HNSW":
+            index_params.add_index(
+                field_name="embedding",
+                index_type="HNSW",
+                metric_type="COSINE",
+                params={"M": 16, "efConstruction": 256},
+            )
+        elif index_type == "IVF_FLAT":
+            index_params.add_index(
+                field_name="embedding",
+                index_type="IVF_FLAT",
+                metric_type="COSINE",
+                params={"nlist": 128},
+            )
+        else:
+            raise ValueError(f"Unsupported index_type: {index_type}. Use 'HNSW' or 'IVF_FLAT'.")
         client.create_index(collection_name=collection_name, index_params=index_params)
-        print(f"Collection '{collection_name}' created (dim={embedding_dim}, HNSW index).")
+        print(f"Collection '{collection_name}' created (dim={embedding_dim}, {index_type} index).")
 
     # --- Setup embedding ---
     use_endpoint = bool(embedding_endpoint)
@@ -188,9 +199,9 @@ def ingest_to_milvus(
                 "pipeline_run_id": pipeline_run_id or "unknown",
                 "chunk_index": c["chunk_index"],
                 "text": c["text"],
-                "lob": c.get("lob", ""),
-                "doc_type": c.get("doc_type", ""),
-                "effective_date": c.get("effective_date", ""),
+                "category": c.get("category", ""),
+                "subcategory": c.get("subcategory", ""),
+                "document_date": c.get("document_date", ""),
                 "embedding": emb,
             }
             for c, emb in zip(batch, embeddings)

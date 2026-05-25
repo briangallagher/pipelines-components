@@ -42,9 +42,9 @@ def parse_and_chunk(
     enable_profiling: bool = False,
     verbose: bool = True,
     bypass_kueue: bool = False,
-    doc_lob: str = "",
-    doc_type: str = "",
-    doc_effective_date: str = "",
+    doc_category: str = "",
+    doc_subcategory: str = "",
+    doc_date: str = "",
 ) -> str:
     """Parse PDFs and write chunked JSONL files to S3.
 
@@ -261,9 +261,9 @@ def parse_and_chunk(
                                 "source_document_id": doc_id,
                                 "chunk_index": idx,
                                 "text": chunk.text,
-                                "lob": os.environ.get("DOC_LOB", ""),
-                                "doc_type": os.environ.get("DOC_TYPE", ""),
-                                "effective_date": os.environ.get("DOC_EFFECTIVE_DATE", ""),
+                                "category": os.environ.get("DOC_CATEGORY", ""),
+                                "subcategory": os.environ.get("DOC_SUBCATEGORY", ""),
+                                "document_date": os.environ.get("DOC_DATE", ""),
                             }))
                     if not lines:
                         log_verbose(f"[Worker {worker_pid}] {fname}: ALL CHUNKS EMPTY")
@@ -668,9 +668,9 @@ def parse_and_chunk(
                 "S3_PREFIX": s3_prefix,
                 "ENABLE_PROFILING": "true" if enable_profiling else "false",
                 "VERBOSE": "true" if verbose else "false",
-                "DOC_LOB": doc_lob,
-                "DOC_TYPE": doc_type,
-                "DOC_EFFECTIVE_DATE": doc_effective_date,
+                "DOC_CATEGORY": doc_category,
+                "DOC_SUBCATEGORY": doc_subcategory,
+                "DOC_DATE": doc_date,
             },
         ),
         ttl_seconds_after_finished=300,
