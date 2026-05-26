@@ -85,12 +85,41 @@ def acquire_documents(
 
         try:
             if connector_type == "s3":
-                filename = source_url.split("/")[-1]
-                src_key = f"corpus/{collection_name}/{filename}"
-                dest_key = f"{s3_staging_prefix}/{filename}"
+                # List actual files in corpus/<collection>/ and find a match
+                # Files might not match source_url filename — use listing
+                if not hasattr(acquire_documents, '_corpus_files'):
+                    acquire_documents._corpus_files = {}
+                if collection_name not in acquire_documents._corpus_files:
+                    prefix = f"corpus/{collection_name}/"
+                    resp = s3.list_objects_v2(Bucket=s3_bucket, Prefix=prefix)
+                    acquire_documents._corpus_files[collection_name] = [
+                        obj["Key"] for obj in resp.get("Contents", [])
+                    ]
+                    print(f"    Found {len(acquire_documents._corpus_files[collection_name])} files in s3://{s3_bucket}/{prefix}")
 
+                corpus_files = acquire_documents._corpus_files[collection_name]
+                # Match by index position (docs ordered same as files) or by doc_id prefix in filename
+                doc_idx = docs_data.index(doc)
+                if doc_idx < len(corpus_files):
+                    src_key = corpus_files[doc_idx]
+                    filename = src_key.split("/")[-1]
+                else:
+                    # Fallback: try to find file containing doc_id components
+                    filename = None
+                    for cf in corpus_files:
+                        fname = cf.split("/")[-1]
+                        # Simple heuristic match
+                        if doc_id.replace("-", "") in fname.replace("-", "").lower():
+                            filename = fname
+                            src_key = cf
+                            break
+                    if not filename:
+                        print(f"    WARNING: {doc_id} — no matching file in corpus — skipping")
+                        skipped.append({"doc_id": doc_id, "reason": "no_match"})
+                        continue
+
+                dest_key = f"{s3_staging_prefix}/{filename}"
                 try:
-                    s3.head_object(Bucket=s3_bucket, Key=src_key)
                     s3.copy_object(
                         Bucket=s3_bucket,
                         CopySource={"Bucket": s3_bucket, "Key": src_key},
@@ -98,7 +127,7 @@ def acquire_documents(
                     )
                 except Exception as copy_err:
                     if "404" in str(copy_err) or "NoSuchKey" in str(copy_err):
-                        print(f"    WARNING: {doc_id} not found — skipping")
+                        print(f"    WARNING: {doc_id} not found at {src_key} — skipping")
                         skipped.append({"doc_id": doc_id, "reason": "not_found"})
                         try:
                             registry.patch(f"/api/v1/documents/{doc_id}", json={"status": "unavailable"})
