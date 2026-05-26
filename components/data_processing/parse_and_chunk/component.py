@@ -913,6 +913,46 @@ def parse_and_chunk(
                 self._run_id = result.get("run", {}).get("info", {}).get("run_id")
                 return self._run_id
 
+            def create_parent_run(self, run_name, tags=None):
+                """Create a parent run (pipeline-level)."""
+                body = {
+                    "experiment_id": self._experiment_id,
+                    "run_name": run_name,
+                }
+                if tags:
+                    body["tags"] = [{"key": k, "value": str(v)} for k, v in tags.items()]
+                result = self._post("/api/2.0/mlflow/runs/create", body)
+                return result.get("run", {}).get("info", {}).get("run_id")
+
+            def create_nested_run(self, run_name, parent_run_id):
+                """Create a nested run under a parent."""
+                result = self._post("/api/2.0/mlflow/runs/create", {
+                    "experiment_id": self._experiment_id,
+                    "run_name": run_name,
+                    "tags": [
+                        {"key": "mlflow.parentRunId", "value": parent_run_id},
+                    ],
+                })
+                self._run_id = result.get("run", {}).get("info", {}).get("run_id")
+                return self._run_id
+
+            def find_run_by_name(self, run_name):
+                """Find a run by name in the current experiment."""
+                resp = _req.post(
+                    f"{self._url}/api/2.0/mlflow/runs/search",
+                    json={
+                        "experiment_ids": [self._experiment_id],
+                        "filter": f"tags.`mlflow.runName` = '{run_name}'",
+                        "max_results": 1,
+                    },
+                    headers=self._headers, verify=False, timeout=10,
+                )
+                if resp.ok:
+                    runs = resp.json().get("runs", [])
+                    if runs:
+                        return runs[0].get("info", {}).get("run_id")
+                return None
+
             def log_param(self, key, value):
                 if not self._run_id:
                     return
@@ -928,18 +968,30 @@ def parse_and_chunk(
                     "timestamp": int(time.time() * 1000),
                 })
 
-            def end_run(self, status="FINISHED"):
-                if not self._run_id:
+            def end_run(self, status="FINISHED", run_id=None):
+                """End a specific run (or the current run)."""
+                target = run_id or self._run_id
+                if not target:
                     return
                 self._post("/api/2.0/mlflow/runs/update", {
-                    "run_id": self._run_id, "status": status,
+                    "run_id": target, "status": status,
                     "end_time": int(time.time() * 1000),
                 })
 
         duration_seconds = time.time() - start_time
         tracker = _MLflowRESTTracker()
         tracker.create_experiment("data-strat-ingest")
-        tracker.start_run(run_name=f"parse-{rayjob_name}")
+
+        parent_id = tracker.create_parent_run(
+            run_name=pipeline_run_id or "unknown",
+            tags={
+                "kfp.pipeline_run_id": pipeline_run_id or "unknown",
+                "kfp.namespace": namespace,
+                "kfp.component": "pipeline",
+            },
+        )
+
+        tracker.create_nested_run("parse_and_chunk", parent_id)
         tracker.log_param("pipeline_run_id", pipeline_run_id or "unknown")
         tracker.log_param("num_files", str(num_files))
         tracker.log_param("chunk_max_tokens", str(chunk_max_tokens))
@@ -956,7 +1008,7 @@ def parse_and_chunk(
         tracker.log_param("namespace", namespace)
         tracker.log_metric("duration_seconds", duration_seconds)
         tracker.end_run()
-        print("MLflow: logged parse run to experiment 'data-strat-ingest'")
+        print(f"MLflow: logged parse_and_chunk as nested run under parent {pipeline_run_id}")
     except Exception as e:
         print(f"MLflow tracking failed (non-blocking): {e}")
 

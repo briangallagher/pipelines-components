@@ -349,6 +349,46 @@ def ingest_to_milvus(
                 self._run_id = result.get("run", {}).get("info", {}).get("run_id")
                 return self._run_id
 
+            def create_parent_run(self, run_name, tags=None):
+                """Create a parent run (pipeline-level)."""
+                body = {
+                    "experiment_id": self._experiment_id,
+                    "run_name": run_name,
+                }
+                if tags:
+                    body["tags"] = [{"key": k, "value": str(v)} for k, v in tags.items()]
+                result = self._post("/api/2.0/mlflow/runs/create", body)
+                return result.get("run", {}).get("info", {}).get("run_id")
+
+            def create_nested_run(self, run_name, parent_run_id):
+                """Create a nested run under a parent."""
+                result = self._post("/api/2.0/mlflow/runs/create", {
+                    "experiment_id": self._experiment_id,
+                    "run_name": run_name,
+                    "tags": [
+                        {"key": "mlflow.parentRunId", "value": parent_run_id},
+                    ],
+                })
+                self._run_id = result.get("run", {}).get("info", {}).get("run_id")
+                return self._run_id
+
+            def find_run_by_name(self, run_name):
+                """Find a run by name in the current experiment."""
+                resp = req_lib.post(
+                    f"{self._url}/api/2.0/mlflow/runs/search",
+                    json={
+                        "experiment_ids": [self._experiment_id],
+                        "filter": f"tags.`mlflow.runName` = '{run_name}'",
+                        "max_results": 1,
+                    },
+                    headers=self._headers, verify=False, timeout=10,
+                )
+                if resp.ok:
+                    runs = resp.json().get("runs", [])
+                    if runs:
+                        return runs[0].get("info", {}).get("run_id")
+                return None
+
             def log_param(self, key, value):
                 if not self._run_id:
                     return
@@ -364,17 +404,27 @@ def ingest_to_milvus(
                     "timestamp": int(time.time() * 1000),
                 })
 
-            def end_run(self, status="FINISHED"):
-                if not self._run_id:
+            def end_run(self, status="FINISHED", run_id=None):
+                """End a specific run (or the current run)."""
+                target = run_id or self._run_id
+                if not target:
                     return
                 self._post("/api/2.0/mlflow/runs/update", {
-                    "run_id": self._run_id, "status": status,
+                    "run_id": target, "status": status,
                     "end_time": int(time.time() * 1000),
                 })
 
         tracker = _MLflowRESTTracker()
         tracker.create_experiment("data-strat-ingest")
-        tracker.start_run(run_name=f"ingest-{collection_name}")
+
+        parent_id = tracker.find_run_by_name(pipeline_run_id or "unknown")
+
+        if parent_id:
+            tracker.create_nested_run("ingest_to_milvus", parent_id)
+        else:
+            tracker.start_run(run_name=f"ingest-{collection_name}")
+            print("MLflow: parent run not found, creating standalone run")
+
         tracker.log_param("pipeline_run_id", pipeline_run_id)
         tracker.log_param("collection_name", collection_name)
         tracker.log_param("embedding_model", embedding_model)
@@ -391,7 +441,12 @@ def ingest_to_milvus(
         tracker.log_metric("duration_seconds", wall_clock)
         tracker.log_metric("vectors_per_second", float(total_inserted / max(wall_clock, 0.1)))
         tracker.end_run()
-        print("MLflow: logged ingest run to experiment 'data-strat-ingest'")
+
+        if parent_id:
+            tracker.end_run(status="FINISHED", run_id=parent_id)
+            print(f"MLflow: logged ingest_to_milvus + closed parent run {pipeline_run_id}")
+        else:
+            print("MLflow: logged ingest_to_milvus as standalone run")
     except Exception as e:
         print(f"MLflow tracking failed (non-blocking): {e}")
 
