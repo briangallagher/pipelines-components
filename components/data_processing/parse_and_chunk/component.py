@@ -48,6 +48,7 @@ def parse_and_chunk(
     doc_subcategory: str = "",
     doc_date: str = "",
     pipeline_run_id: str = "",
+    manifest_s3_key: str = "",
 ) -> str:
     """Parse PDFs and write chunked JSONL files to S3.
 
@@ -127,8 +128,49 @@ def parse_and_chunk(
         S3_ACCESS_KEY = os.environ.get("S3_ACCESS_KEY", "")
         S3_SECRET_KEY = os.environ.get("S3_SECRET_KEY", "")
 
+        MANIFEST_S3_KEY = os.environ.get("MANIFEST_S3_KEY", "")
+
         ENABLE_PROFILING = os.environ.get("ENABLE_PROFILING", "false").lower() == "true"
         VERBOSE = os.environ.get("VERBOSE", "true").lower() == "true"
+
+        _MANIFEST_LOOKUP: Dict[str, dict] = {}
+
+        def _load_manifest():
+            """Download manifest.json from S3 and build a filename-keyed lookup."""
+            global _MANIFEST_LOOKUP
+            if not MANIFEST_S3_KEY:
+                log_verbose("No MANIFEST_S3_KEY set - using pipeline-level metadata")
+                return
+            try:
+                s3 = _get_s3_client()
+                resp = s3.get_object(Bucket=S3_BUCKET, Key=MANIFEST_S3_KEY)
+                manifest_data = json.loads(resp["Body"].read().decode("utf-8"))
+                for entry in manifest_data:
+                    filename = entry.get("filename", "")
+                    if filename:
+                        _MANIFEST_LOOKUP[filename] = entry
+                log_verbose(f"Loaded manifest with {len(_MANIFEST_LOOKUP)} entries from s3://{S3_BUCKET}/{MANIFEST_S3_KEY}")
+            except Exception as e:
+                log_verbose(f"WARNING: Failed to load manifest: {e} - falling back to pipeline-level metadata")
+
+        def _get_doc_metadata(filename: str) -> dict:
+            """Get per-document metadata from manifest, falling back to pipeline-level env vars."""
+            entry = _MANIFEST_LOOKUP.get(filename, {})
+            if entry:
+                return {
+                    "doc_id": entry.get("doc_id", ""),
+                    "category": entry.get("line_of_business", os.environ.get("DOC_CATEGORY", "")),
+                    "subcategory": entry.get("document_type", os.environ.get("DOC_SUBCATEGORY", "")),
+                    "document_date": entry.get("effective_date", os.environ.get("DOC_DATE", "")),
+                    "jurisdiction": entry.get("jurisdiction", ""),
+                }
+            return {
+                "doc_id": "",
+                "category": os.environ.get("DOC_CATEGORY", ""),
+                "subcategory": os.environ.get("DOC_SUBCATEGORY", ""),
+                "document_date": os.environ.get("DOC_DATE", ""),
+                "jurisdiction": "",
+            }
 
         def log_verbose(msg):
             """Log message if VERBOSE is enabled."""
@@ -256,7 +298,8 @@ def parse_and_chunk(
                         continue
 
                     lines = []
-                    doc_id = stem.lower().replace(" ", "-")
+                    meta = _get_doc_metadata(fname)
+                    doc_id = meta["doc_id"] if meta["doc_id"] else stem.lower().replace(" ", "-")
                     for idx, chunk in enumerate(chunks):
                         if chunk.text.strip():
                             lines.append(json.dumps({
@@ -264,9 +307,10 @@ def parse_and_chunk(
                                 "source_document_id": doc_id,
                                 "chunk_index": idx,
                                 "text": chunk.text,
-                                "category": os.environ.get("DOC_CATEGORY", ""),
-                                "subcategory": os.environ.get("DOC_SUBCATEGORY", ""),
-                                "document_date": os.environ.get("DOC_DATE", ""),
+                                "category": meta["category"],
+                                "subcategory": meta["subcategory"],
+                                "document_date": meta["document_date"],
+                                "jurisdiction": meta["jurisdiction"],
                             }))
                     if not lines:
                         log_verbose(f"[Worker {worker_pid}] {fname}: ALL CHUNKS EMPTY")
@@ -393,6 +437,7 @@ def parse_and_chunk(
             print("=" * 80)
             print("DOCLING PDF PARSING & CHUNKING JOB")
             print("=" * 80)
+            _load_manifest()
             log_verbose(f"Configuration:")
             log_verbose(f"  PVC mount: {PVC_MOUNT_PATH}")
             log_verbose(f"  Input path: {INPUT_PATH}")
@@ -674,6 +719,7 @@ def parse_and_chunk(
                 "DOC_CATEGORY": doc_category,
                 "DOC_SUBCATEGORY": doc_subcategory,
                 "DOC_DATE": doc_date,
+                "MANIFEST_S3_KEY": manifest_s3_key,
             },
         ),
         ttl_seconds_after_finished=300,

@@ -1,8 +1,9 @@
-"""KFP Pipeline: Data-Chain-Only RAG Ingest.
+"""KFP Pipeline: RAG Ingest with Document Acquisition.
 
-Two-step linear pipeline for M1–M3:
-1. Parse & chunk PDFs (Docling + HybridChunker via RayJob → S3)
-2. Ingest into Milvus (read chunks from S3, embed locally or via endpoint, insert)
+Three-step linear pipeline for M3+:
+1. Acquire documents from source systems via Document Registry
+2. Parse & chunk PDFs (Docling + HybridChunker via RayJob -> S3)
+3. Ingest into Milvus (read chunks from S3, embed locally or via endpoint, insert)
 
 No model deployment steps — embedding uses either a local sentence-transformers
 model or a pre-existing endpoint. LLM deployment is handled separately (see the
@@ -10,6 +11,7 @@ full rag_multistep_pipeline for M4+).
 """
 
 from kfp import dsl, kubernetes
+from kfp_components.components.data_processing.acquire_documents import acquire_documents
 from kfp_components.components.data_processing.ingest_to_milvus import ingest_to_milvus
 from kfp_components.components.data_processing.parse_and_chunk import parse_and_chunk
 
@@ -31,7 +33,11 @@ def rag_ingest_pipeline(
     s3_endpoint: str = "http://minio-service.default.svc.cluster.local:9000",
     s3_bucket: str = "rag-chunks",
     s3_prefix: str = "chunks",
+    s3_staging_prefix: str = "staging",
     s3_secret_name: str = "minio-secret",
+    # Acquisition (M3+)
+    registry_url: str = "http://doc-registry:8080",
+    connector_type: str = "s3",
     # PDF parsing
     input_path: str = "input/pdfs",
     ray_image: str = "quay.io/rhoai-szaher/docling-ray:latest",
@@ -70,7 +76,37 @@ def rag_ingest_pipeline(
     doc_date: str = "",
     index_type: str = "HNSW",
 ):
-    # Step 1: Parse & chunk PDFs → S3
+    # Step 1: Acquire documents from source systems via registry
+    acquire_task = acquire_documents(
+        registry_url=registry_url,
+        collection_name=collection_name,
+        connector_type=connector_type,
+        s3_endpoint=s3_endpoint,
+        s3_bucket=s3_bucket,
+        s3_staging_prefix=s3_staging_prefix,
+        namespace=namespace,
+        s3_secret_name=s3_secret_name,
+        pipeline_run_id=pipeline_run_id,
+    )
+    acquire_task.set_caching_options(False)
+    kubernetes.use_secret_as_env(
+        acquire_task,
+        secret_name=s3_secret_name,
+        secret_key_to_env={
+            "access_key": "S3_ACCESS_KEY",
+            "secret_key": "S3_SECRET_KEY",
+        },
+    )
+    kubernetes.use_config_map_as_env(
+        acquire_task,
+        config_map_name="data-strat-lineage-config",
+        config_map_key_to_env={
+            "OPENLINEAGE_URL": "OPENLINEAGE_URL",
+            "MLFLOW_BRIDGE_ENABLED": "MLFLOW_BRIDGE_ENABLED",
+        },
+    )
+
+    # Step 2: Parse & chunk PDFs → S3
     chunk_task = parse_and_chunk(
         pvc_name=pvc_name,
         pvc_mount_path=pvc_mount_path,
@@ -101,7 +137,9 @@ def rag_ingest_pipeline(
         doc_subcategory=doc_subcategory,
         doc_date=doc_date,
         pipeline_run_id=pipeline_run_id,
+        manifest_s3_key=acquire_task.output,
     )
+    chunk_task.after(acquire_task)
     chunk_task.set_caching_options(False)
     kubernetes.use_config_map_as_env(
         chunk_task,
