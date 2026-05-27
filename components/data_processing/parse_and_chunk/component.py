@@ -1059,14 +1059,31 @@ def parse_and_chunk(
         tracker = _MLflowRESTTracker()
         tracker.create_experiment("data-strat-ingest")
 
-        parent_id = tracker.create_parent_run(
-            run_name=pipeline_run_id or "unknown",
-            tags={
-                "kfp.pipeline_run_id": pipeline_run_id or "unknown",
-                "kfp.namespace": namespace,
-                "kfp.component": "pipeline",
-            },
-        )
+        parent_id = None
+        if pipeline_run_id:
+            search_resp = _req.post(
+                f"{tracker._url}/api/2.0/mlflow/runs/search",
+                json={
+                    "experiment_ids": [tracker._experiment_id],
+                    "filter": f"tags.`kfp.pipeline_run_id` = '{pipeline_run_id}'",
+                    "max_results": 1,
+                },
+                headers=tracker._headers, verify=False, timeout=10,
+            )
+            if search_resp.ok:
+                found = search_resp.json().get("runs", [])
+                if found:
+                    parent_id = found[0].get("info", {}).get("run_id")
+
+        if not parent_id:
+            parent_id = tracker.create_parent_run(
+                run_name=pipeline_run_id or "unknown",
+                tags={
+                    "kfp.pipeline_run_id": pipeline_run_id or "unknown",
+                    "kfp.namespace": namespace,
+                    "kfp.component": "pipeline",
+                },
+            )
 
         tracker.create_nested_run("parse_and_chunk", parent_id)
         tracker.log_param("pipeline_run_id", pipeline_run_id or "unknown")
