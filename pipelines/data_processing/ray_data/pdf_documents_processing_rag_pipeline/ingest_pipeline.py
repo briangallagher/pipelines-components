@@ -138,6 +138,7 @@ def rag_ingest_pipeline(
         doc_date=doc_date,
         pipeline_run_id=pipeline_run_id,
         manifest_s3_key=acquire_task.output,
+        s3_staging_prefix=s3_staging_prefix,
     )
     chunk_task.after(acquire_task)
     chunk_task.set_caching_options(False)

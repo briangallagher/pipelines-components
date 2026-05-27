@@ -49,6 +49,7 @@ def parse_and_chunk(
     doc_date: str = "",
     pipeline_run_id: str = "",
     manifest_s3_key: str = "",
+    s3_staging_prefix: str = "",
 ) -> str:
     """Parse PDFs and write chunked JSONL files to S3.
 
@@ -129,6 +130,7 @@ def parse_and_chunk(
         S3_SECRET_KEY = os.environ.get("S3_SECRET_KEY", "")
 
         MANIFEST_S3_KEY = os.environ.get("MANIFEST_S3_KEY", "")
+        S3_STAGING_PREFIX = os.environ.get("S3_STAGING_PREFIX", "")
 
         ENABLE_PROFILING = os.environ.get("ENABLE_PROFILING", "false").lower() == "true"
         VERBOSE = os.environ.get("VERBOSE", "true").lower() == "true"
@@ -455,34 +457,53 @@ def parse_and_chunk(
             log_verbose(f"  Verbose: {VERBOSE}")
             log_verbose(f"  Profiling: {ENABLE_PROFILING}")
 
-            print(f"\\nScanning for PDFs...")
-            input_full_path = os.path.join(PVC_MOUNT_PATH, INPUT_PATH)
-            log_verbose(f"Globbing: {input_full_path}/**/*.pdf")
-            pdf_paths = sorted(glob.glob(f"{input_full_path}/**/*.pdf", recursive=True))
-            print(f"  Found {len(pdf_paths)} total PDFs")
-
-            if NUM_FILES > 0:
-                pdf_paths = pdf_paths[:NUM_FILES]
-                print(f"  Limited to first {NUM_FILES} PDFs")
-
-            print(f"  Processing {len(pdf_paths)} PDFs")
-
-            if not pdf_paths:
-                print("\\nERROR: No PDFs found. Exiting.")
-                log_verbose("Checked paths:")
-                log_verbose(f"  - {input_full_path}")
-                log_verbose(f"  - {os.path.join(PVC_MOUNT_PATH, 'input/pdfs')}")
-                return
-
-            if VERBOSE and len(pdf_paths) <= 20:
-                log_verbose("PDFs to process:")
-                for i, path in enumerate(pdf_paths, 1):
-                    log_verbose(f"  {i}. {path}")
-
             print(f"\\nSetting up S3...")
             s3 = _get_s3_client()
             _ensure_bucket(s3, S3_BUCKET)
             print(f"  Output: s3://{S3_BUCKET}/{S3_PREFIX}/")
+
+            print(f"\\nAcquiring PDFs from S3 staging...")
+            pdf_paths = []
+            if S3_STAGING_PREFIX:
+                log_verbose(f"Downloading from s3://{S3_BUCKET}/{S3_STAGING_PREFIX}/")
+                local_staging = "/tmp/staging_pdfs"
+                os.makedirs(local_staging, exist_ok=True)
+                paginator = s3.get_paginator("list_objects_v2")
+                for page in paginator.paginate(Bucket=S3_BUCKET, Prefix=S3_STAGING_PREFIX + "/"):
+                    for obj in page.get("Contents", []):
+                        key = obj["Key"]
+                        if key.endswith("/") or key.endswith("manifest.json"):
+                            continue
+                        fname = key.split("/")[-1]
+                        local_path = os.path.join(local_staging, fname)
+                        s3.download_file(S3_BUCKET, key, local_path)
+                        pdf_paths.append(local_path)
+                print(f"  Downloaded {len(pdf_paths)} files from S3 staging")
+            else:
+                log_verbose("No S3_STAGING_PREFIX set, falling back to PVC")
+                input_full_path = os.path.join(PVC_MOUNT_PATH, INPUT_PATH)
+                log_verbose(f"Globbing: {input_full_path}/**/*.pdf")
+                pdf_paths = sorted(glob.glob(f"{input_full_path}/**/*.pdf", recursive=True))
+                print(f"  Found {len(pdf_paths)} PDFs on PVC")
+
+            if NUM_FILES > 0:
+                pdf_paths = pdf_paths[:NUM_FILES]
+                print(f"  Limited to first {NUM_FILES} files")
+
+            print(f"  Processing {len(pdf_paths)} files")
+
+            if not pdf_paths:
+                print("\\nERROR: No files found. Exiting.")
+                if S3_STAGING_PREFIX:
+                    log_verbose(f"  Checked: s3://{S3_BUCKET}/{S3_STAGING_PREFIX}/")
+                else:
+                    log_verbose(f"  Checked: {os.path.join(PVC_MOUNT_PATH, INPUT_PATH)}")
+                return
+
+            if VERBOSE and len(pdf_paths) <= 20:
+                log_verbose("Files to process:")
+                for i, path in enumerate(pdf_paths, 1):
+                    log_verbose(f"  {i}. {path}")
 
             print(f"\\nPreparing Ray dataset...")
             target_blocks = MAX_ACTORS * REPARTITION_FACTOR
@@ -720,6 +741,7 @@ def parse_and_chunk(
                 "DOC_SUBCATEGORY": doc_subcategory,
                 "DOC_DATE": doc_date,
                 "MANIFEST_S3_KEY": manifest_s3_key,
+                "S3_STAGING_PREFIX": s3_staging_prefix,
             },
         ),
         ttl_seconds_after_finished=300,
@@ -867,10 +889,16 @@ def parse_and_chunk(
         _s3_host = _s3_parsed.hostname or "minio"
         _s3_port = _s3_parsed.port or 9000
 
-        input_ds = {
-            "namespace": f"pvc://{namespace}",
-            "name": f"{pvc_name}/{input_path}",
-        }
+        if s3_staging_prefix:
+            input_ds = {
+                "namespace": f"s3://{_s3_host}:{_s3_port}",
+                "name": f"{s3_bucket}/{s3_staging_prefix}",
+            }
+        else:
+            input_ds = {
+                "namespace": f"pvc://{namespace}",
+                "name": f"{pvc_name}/{input_path}",
+            }
         output_ns, output_name = s3_dataset(
             bucket=s3_bucket, path=s3_prefix, host=_s3_host, port=_s3_port,
         )
