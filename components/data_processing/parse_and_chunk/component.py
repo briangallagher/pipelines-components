@@ -706,7 +706,8 @@ def parse_and_chunk(
     )
     from ray.runtime_env import RuntimeEnv
 
-    rayjob_name = f"docling-chunk-{int(time.time())}"
+    _run_suffix = (pipeline_run_id or "")[:8] or str(int(time.time()))
+    rayjob_name = f"docling-{_run_suffix}"
 
     script_b64 = base64.b64encode(_DOCLING_CHUNK_PROCESS_PY.encode()).decode()
 
@@ -784,14 +785,20 @@ def parse_and_chunk(
     rayjob_plural = "rayjobs"
 
     rayjob_cr = job._build_rayjob_cr()
-    custom_api.create_namespaced_custom_object(
-        group=rayjob_group,
-        version=rayjob_version,
-        namespace=namespace,
-        plural=rayjob_plural,
-        body=rayjob_cr,
-    )
-    print(f"RayJob '{rayjob_name}' submitted via kubernetes API.")
+    try:
+        custom_api.create_namespaced_custom_object(
+            group=rayjob_group,
+            version=rayjob_version,
+            namespace=namespace,
+            plural=rayjob_plural,
+            body=rayjob_cr,
+        )
+        print(f"RayJob '{rayjob_name}' submitted via kubernetes API.")
+    except k8s_client.exceptions.ApiException as e:
+        if e.status == 409:
+            print(f"RayJob '{rayjob_name}' already exists - adopting existing job.")
+        else:
+            raise
 
     if bypass_kueue:
         rayjob_obj = custom_api.get_namespaced_custom_object(
