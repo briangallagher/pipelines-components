@@ -268,8 +268,16 @@ def parse_and_chunk(
                     t_start = time.time()
                     log_verbose(f"[Worker {worker_pid}] Processing file {file_count}: {fname}")
 
-                    with open(file_path, "rb") as f:
-                        file_bytes = f.read()
+                    if str(file_path).startswith("s3://"):
+                        parts = str(file_path).replace("s3://", "").split("/", 1)
+                        dl_bucket = parts[0]
+                        dl_key = parts[1]
+                        log_verbose(f"[Worker {worker_pid}] Downloading from S3: {dl_key}")
+                        resp = s3.get_object(Bucket=dl_bucket, Key=dl_key)
+                        file_bytes = resp["Body"].read()
+                    else:
+                        with open(file_path, "rb") as f:
+                            file_bytes = f.read()
                     if len(file_bytes) == 0:
                         log_verbose(f"[Worker {worker_pid}] {fname}: EMPTY FILE")
                         res_q.put(("error", file_path, 0, 0, "File empty"))
@@ -462,23 +470,18 @@ def parse_and_chunk(
             _ensure_bucket(s3, S3_BUCKET)
             print(f"  Output: s3://{S3_BUCKET}/{S3_PREFIX}/")
 
-            print(f"\\nAcquiring PDFs from S3 staging...")
+            print(f"\\nAcquiring input files...")
             pdf_paths = []
             if S3_STAGING_PREFIX:
-                log_verbose(f"Downloading from s3://{S3_BUCKET}/{S3_STAGING_PREFIX}/")
-                local_staging = "/tmp/staging_pdfs"
-                os.makedirs(local_staging, exist_ok=True)
+                log_verbose(f"Listing files in s3://{S3_BUCKET}/{S3_STAGING_PREFIX}/")
                 paginator = s3.get_paginator("list_objects_v2")
                 for page in paginator.paginate(Bucket=S3_BUCKET, Prefix=S3_STAGING_PREFIX + "/"):
                     for obj in page.get("Contents", []):
                         key = obj["Key"]
                         if key.endswith("/") or key.endswith("manifest.json"):
                             continue
-                        fname = key.split("/")[-1]
-                        local_path = os.path.join(local_staging, fname)
-                        s3.download_file(S3_BUCKET, key, local_path)
-                        pdf_paths.append(local_path)
-                print(f"  Downloaded {len(pdf_paths)} files from S3 staging")
+                        pdf_paths.append(f"s3://{S3_BUCKET}/{key}")
+                print(f"  Found {len(pdf_paths)} files in S3 staging")
             else:
                 log_verbose("No S3_STAGING_PREFIX set, falling back to PVC")
                 input_full_path = os.path.join(PVC_MOUNT_PATH, INPUT_PATH)
