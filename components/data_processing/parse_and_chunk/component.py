@@ -958,8 +958,9 @@ def parse_and_chunk(
                 "id": _pipeline_run_id,
             }
 
+        _collection = s3_staging_prefix.split("/")[-1] if s3_staging_prefix else "unknown"
         with kfp_lineage(
-            "parse_and_chunk",
+            f"parse_and_chunk/{_collection}",
             inputs=[input_ds],
             outputs=[output_ds],
             run_facets=ol_run_facets,

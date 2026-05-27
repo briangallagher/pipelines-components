@@ -296,7 +296,7 @@ def ingest_to_milvus(
             }
 
         with kfp_lineage(
-            "ingest_to_milvus",
+            f"ingest_to_milvus/{collection_name}",
             inputs=[input_ds],
             outputs=[output_ds],
             run_facets=ol_run_facets,

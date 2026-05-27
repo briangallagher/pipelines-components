@@ -205,7 +205,7 @@ def acquire_documents(
                 "_schemaURL": "https://openlineage.io/spec/1-0-0/OpenLineage.json",
                 "id": pipeline_run_id,
             }
-        with kfp_lineage("acquire_documents", inputs=input_datasets,
+        with kfp_lineage(f"acquire_documents/{collection_name}", inputs=input_datasets,
                          outputs=[output_ds], run_facets=ol_run_facets):
             pass
         print("OpenLineage event emitted for acquire_documents")
