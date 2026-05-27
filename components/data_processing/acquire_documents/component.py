@@ -242,11 +242,14 @@ def acquire_documents(
                     if runs:
                         parent_id = runs[0].get("info", {}).get("run_id")
                 if not parent_id:
+                    from datetime import datetime as _dt
+                    _run_name = f"ingest/{collection_name}/{_dt.utcnow().strftime('%Y-%m-%d %H:%M')}"
                     cr = _req.post(f"{mlflow_url}/api/2.0/mlflow/runs/create",
-                        json={"experiment_id": experiment_id, "run_name": pipeline_run_id or "unknown",
+                        json={"experiment_id": experiment_id, "run_name": _run_name,
                               "tags": [{"key": "kfp.pipeline_run_id", "value": pipeline_run_id},
                                        {"key": "kfp.namespace", "value": namespace},
-                                       {"key": "kfp.component", "value": "pipeline"}]},
+                                       {"key": "kfp.component", "value": "pipeline"},
+                                       {"key": "kfp.collection", "value": collection_name}]},
                         headers=headers, verify=False, timeout=10)
                     if cr.ok:
                         parent_id = cr.json().get("run", {}).get("info", {}).get("run_id")
