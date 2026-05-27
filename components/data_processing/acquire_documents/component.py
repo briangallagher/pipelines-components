@@ -180,7 +180,23 @@ def acquire_documents(
         _s3_port = _s3_parsed.port or 9000
 
         input_datasets = [
-            {"namespace": f"registry://{e['source_system']}", "name": e["doc_id"]}
+            {
+                "namespace": f"registry://{e['source_system']}",
+                "name": e["doc_id"],
+                "inputFacets": {
+                    "document_metadata": {
+                        "_producer": "https://github.com/rhoai-lineage",
+                        "_schemaURL": "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/InputDatasetFacet",
+                        "source_url": e.get("source_url", ""),
+                        "source_system": e.get("source_system", ""),
+                        "document_type": e.get("document_type", ""),
+                        "line_of_business": e.get("line_of_business", ""),
+                        "jurisdiction": e.get("jurisdiction", ""),
+                        "effective_date": e.get("effective_date", ""),
+                        "collection": collection_name,
+                    }
+                }
+            }
             for e in manifest_entries
         ]
         output_ds = {
