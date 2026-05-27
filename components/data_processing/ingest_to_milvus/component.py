@@ -417,7 +417,21 @@ def ingest_to_milvus(
         tracker = _MLflowRESTTracker()
         tracker.create_experiment("data-strat-ingest")
 
-        parent_id = tracker.find_run_by_name(pipeline_run_id or "unknown")
+        parent_id = None
+        if pipeline_run_id:
+            search_resp = req_lib.post(
+                f"{tracker._url}/api/2.0/mlflow/runs/search",
+                json={
+                    "experiment_ids": [tracker._experiment_id],
+                    "filter": f"tags.`kfp.pipeline_run_id` = '{pipeline_run_id}'",
+                    "max_results": 1,
+                },
+                headers=tracker._headers, verify=False, timeout=10,
+            )
+            if search_resp.ok:
+                found = search_resp.json().get("runs", [])
+                if found:
+                    parent_id = found[0].get("info", {}).get("run_id")
 
         if parent_id:
             tracker.create_nested_run("ingest_to_milvus", parent_id)
