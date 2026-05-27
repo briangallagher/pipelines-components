@@ -312,6 +312,32 @@ def parse_and_chunk(
                     doc_id = meta["doc_id"] if meta["doc_id"] else stem.lower().replace(" ", "-")
                     for idx, chunk in enumerate(chunks):
                         if chunk.text.strip():
+                            try:
+                                headings = getattr(getattr(chunk, "meta", None), "headings", None)
+                                section_path = " > ".join(headings) if headings else ""
+                            except Exception:
+                                section_path = ""
+
+                            page_nums = set()
+                            try:
+                                doc_items = getattr(getattr(chunk, "meta", None), "doc_items", None)
+                                if doc_items:
+                                    for di in doc_items:
+                                        for prov in getattr(di, "prov", []):
+                                            pg = getattr(prov, "page_no", None)
+                                            if pg is not None:
+                                                page_nums.add(int(pg))
+                            except Exception:
+                                pass
+                            if page_nums:
+                                sorted_pages = sorted(page_nums)
+                                if len(sorted_pages) == 1:
+                                    page_numbers = str(sorted_pages[0])
+                                else:
+                                    page_numbers = f"{sorted_pages[0]}-{sorted_pages[-1]}"
+                            else:
+                                page_numbers = ""
+
                             lines.append(json.dumps({
                                 "source_file": fname,
                                 "source_document_id": doc_id,
@@ -321,6 +347,8 @@ def parse_and_chunk(
                                 "subcategory": meta["subcategory"],
                                 "document_date": meta["document_date"],
                                 "jurisdiction": meta["jurisdiction"],
+                                "section_path": section_path,
+                                "page_numbers": page_numbers,
                             }))
                     if not lines:
                         log_verbose(f"[Worker {worker_pid}] {fname}: ALL CHUNKS EMPTY")

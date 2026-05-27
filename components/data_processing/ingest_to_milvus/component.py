@@ -127,6 +127,8 @@ def ingest_to_milvus(
                 FieldSchema(name="category", dtype=DataType.VARCHAR, max_length=128),
                 FieldSchema(name="subcategory", dtype=DataType.VARCHAR, max_length=128),
                 FieldSchema(name="document_date", dtype=DataType.VARCHAR, max_length=32),
+                FieldSchema(name="section_path", dtype=DataType.VARCHAR, max_length=1024),
+                FieldSchema(name="page_numbers", dtype=DataType.VARCHAR, max_length=64),
                 FieldSchema(
                     name="embedding",
                     dtype=DataType.FLOAT_VECTOR,
@@ -203,6 +205,8 @@ def ingest_to_milvus(
                 "category": c.get("category", ""),
                 "subcategory": c.get("subcategory", ""),
                 "document_date": c.get("document_date", ""),
+                "section_path": c.get("section_path", ""),
+                "page_numbers": c.get("page_numbers", ""),
                 "embedding": emb,
             }
             for c, emb in zip(batch, embeddings)
